@@ -1,10 +1,4 @@
-"""
-===============================================================================
- Raspberry Pi Sensor Station - Main Script
- BME680 (Temperatur/Druck/Feuchtigkeit/Gas) + PIR Bewegungssensor
- Speichert Daten in MariaDB mit data_source='REAL'
-===============================================================================
-"""
+# Hauptskript - Raspberry Pi Sensorstation (BME680 + PIR, speichert in MariaDB)
 
 import RPi.GPIO as GPIO
 import time
@@ -13,9 +7,6 @@ import mariadb
 import sys
 from datetime import datetime
 
-# ==============================================================================
-# 1. DATABASE CONNECTION PARAMETERS
-# ==============================================================================
 db_config = {
     'host': 'localhost',
     'port': 3306,
@@ -24,9 +15,6 @@ db_config = {
     'database': 'sensor_db'
 }
 
-# ==============================================================================
-# 2. DATABASE CONNECTION
-# ==============================================================================
 try:
     conn = mariadb.connect(**db_config)
     cursor = conn.cursor()
@@ -35,7 +23,6 @@ except mariadb.Error as e:
     print(f"Fehler bei Datenbankverbindung: {e}")
     sys.exit(1)
 
-# Tabelle erstellen (mit allen Spalten inkl. neue)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS sensor_data (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -52,7 +39,6 @@ CREATE TABLE IF NOT EXISTS sensor_data (
 """)
 conn.commit()
 
-# Falls Tabelle bereits existiert: neue Spalten sicher hinzufuegen
 for col_sql in [
     "ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS estimated_occupancy INT DEFAULT NULL",
     "ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS ac_recommendation INT DEFAULT NULL",
@@ -66,17 +52,11 @@ for col_sql in [
 
 print("Datenbank-Schema aktualisiert")
 
-# ==============================================================================
-# 3. GPIO SETUP (Bewegungssensor)
-# ==============================================================================
 GPIO.setmode(GPIO.BCM)
 SENSOR_PIN = 17
 GPIO.setup(SENSOR_PIN, GPIO.IN)
 print("GPIO initialisiert (Pin 17)")
 
-# ==============================================================================
-# 4. BME680 SENSOR SETUP
-# ==============================================================================
 sensor = None
 try:
     sensor = bme680.BME680(bme680.I2C_ADDR_PRIMARY)
@@ -100,12 +80,8 @@ if sensor:
     sensor.select_gas_heater_profile(0)
     print("BME680 Sensor konfiguriert")
 
-# ==============================================================================
-# 5. FUNKTIONEN
-# ==============================================================================
 
 def bewegung():
-    """Nur Bewegungserkennung in Endlosschleife."""
     print("\n--- Starte Bewegungserkennung ---")
     time.sleep(2)
     try:
@@ -122,7 +98,6 @@ def bewegung():
 
 
 def temperatur():
-    """Nur Temperaturmessung in Endlosschleife."""
     print("\n--- Starte Temperaturmessung ---")
     if sensor is None:
         print("Fehler: BME680 Sensor nicht verfuegbar!")
@@ -143,7 +118,6 @@ def temperatur():
 
 
 def read_all_sensors():
-    """Liest alle Sensordaten und gibt sie als Dictionary zurueck."""
     data = {
         'temperature': None, 'pressure': None, 'humidity': None,
         'gas_resistance': None, 'movement_detected': False
@@ -173,10 +147,9 @@ def read_all_sensors():
 
 
 def main_loop():
-    """Hauptschleife: Liest alle Sensoren und speichert in Datenbank."""
     print("\n--- Starte Hauptschleife (Alle Sensoren + Datenbank) ---")
     print("Druecke STRG+C zum Beenden.\n")
-    INTERVALL = 300  # 5 Minuten
+    INTERVALL = 300
 
     try:
         while True:
@@ -186,9 +159,9 @@ def main_loop():
 
             if data['temperature'] is not None:
                 cursor.execute(
-                    """INSERT INTO sensor_data 
-                       (timestamp, temperature, pressure, humidity, gas_resistance, 
-                        movement_detected, data_source) 
+                    """INSERT INTO sensor_data
+                       (timestamp, temperature, pressure, humidity, gas_resistance,
+                        movement_detected, data_source)
                        VALUES (?, ?, ?, ?, ?, ?, 'REAL')""",
                     (timestamp, data['temperature'], data['pressure'],
                      data['humidity'], data['gas_resistance'], data['movement_detected'])
@@ -207,9 +180,8 @@ def main_loop():
 
 
 def show_last_entries(count=10):
-    """Zeigt die letzten Eintraege aus der Datenbank."""
     print(f"\n--- Letzte {count} Eintraege aus der Datenbank ---\n")
-    cursor.execute(f"SELECT * FROM sensor_data ORDER BY id DESC LIMIT {count}")
+    cursor.execute("SELECT * FROM sensor_data ORDER BY id DESC LIMIT ?", (count,))
     rows = cursor.fetchall()
 
     if rows:
@@ -228,9 +200,6 @@ def show_last_entries(count=10):
         print("Keine Eintraege vorhanden.")
 
 
-# ==============================================================================
-# 6. HAUPTPROGRAMM - MENUE
-# ==============================================================================
 if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("   RASPBERRY PI SENSOR STATION")

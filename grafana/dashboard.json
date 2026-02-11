@@ -1,0 +1,551 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "asia-restaurant-sensor",
+    "title": "Asia Restaurant - Sensor Dashboard",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "schemaVersion": 39,
+    "panels": [
+      {
+        "id": 1,
+        "title": "Gaeste aktuell",
+        "type": "gauge",
+        "gridPos": { "x": 0, "y": 0, "w": 6, "h": 6 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT estimated_occupancy AS 'Gaeste' FROM sensor_data WHERE estimated_occupancy IS NOT NULL ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 120,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "green" },
+                { "value": 45, "color": "yellow" },
+                { "value": 70, "color": "orange" },
+                { "value": 95, "color": "red" }
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true
+        }
+      },
+      {
+        "id": 2,
+        "title": "Klimaanlage Empfehlung",
+        "type": "stat",
+        "gridPos": { "x": 6, "y": 0, "w": 6, "h": 6 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT ac_recommendation AS 'Stufe' FROM sensor_data WHERE ac_recommendation IS NOT NULL ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "blue" },
+                { "value": 3, "color": "green" },
+                { "value": 4, "color": "orange" },
+                { "value": 5, "color": "red" }
+              ]
+            },
+            "mappings": [
+              { "type": "value", "options": { "1": { "text": "Stufe 1 - Minimal" }, "2": { "text": "Stufe 2 - Niedrig" }, "3": { "text": "Stufe 3 - Mittel" }, "4": { "text": "Stufe 4 - Hoch" }, "5": { "text": "Stufe 5 - Maximal" } } }
+            ]
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "colorMode": "background",
+          "textMode": "value"
+        }
+      },
+      {
+        "id": 3,
+        "title": "Temperatur",
+        "type": "stat",
+        "gridPos": { "x": 12, "y": 0, "w": 6, "h": 6 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT ROUND(temperature, 1) AS 'Temperatur' FROM sensor_data ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "celsius",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "blue" },
+                { "value": 20, "color": "green" },
+                { "value": 26, "color": "orange" },
+                { "value": 30, "color": "red" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "colorMode": "background",
+          "textMode": "value"
+        }
+      },
+      {
+        "id": 4,
+        "title": "Luftqualitaet",
+        "type": "stat",
+        "gridPos": { "x": 18, "y": 0, "w": 6, "h": 6 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT ROUND(gas_resistance, 0) AS 'Gas' FROM sensor_data ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "red" },
+                { "value": 50000, "color": "orange" },
+                { "value": 100000, "color": "green" }
+              ]
+            },
+            "mappings": [
+              {
+                "type": "range",
+                "options": {
+                  "from": 100000, "to": 999999,
+                  "result": { "text": "Sehr gut", "index": 0 }
+                }
+              },
+              {
+                "type": "range",
+                "options": {
+                  "from": 50000, "to": 99999,
+                  "result": { "text": "Gut", "index": 1 }
+                }
+              },
+              {
+                "type": "range",
+                "options": {
+                  "from": 0, "to": 49999,
+                  "result": { "text": "Maessig", "index": 2 }
+                }
+              }
+            ]
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "colorMode": "background",
+          "textMode": "value_and_name"
+        }
+      },
+      {
+        "id": 5,
+        "title": "Gaeste und Umgebung (Zeitverlauf)",
+        "type": "timeseries",
+        "gridPos": { "x": 0, "y": 6, "w": 24, "h": 10 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT timestamp AS time, estimated_occupancy AS 'Gaeste' FROM sensor_data WHERE $__timeFilter(timestamp) AND estimated_occupancy IS NOT NULL ORDER BY timestamp ASC",
+            "format": "time_series",
+            "refId": "A"
+          },
+          {
+            "rawSql": "SELECT timestamp AS time, temperature AS 'Temperatur' FROM sensor_data WHERE $__timeFilter(timestamp) ORDER BY timestamp ASC",
+            "format": "time_series",
+            "refId": "B"
+          },
+          {
+            "rawSql": "SELECT timestamp AS time, humidity AS 'Feuchtigkeit' FROM sensor_data WHERE $__timeFilter(timestamp) ORDER BY timestamp ASC",
+            "format": "time_series",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "pointSize": 5,
+              "showPoints": "auto"
+            }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "Gaeste" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "left" },
+                { "id": "min", "value": 0 },
+                { "id": "max", "value": 120 },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#c41e3a" } },
+                { "id": "custom.fillOpacity", "value": 20 }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Temperatur" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "right" },
+                { "id": "unit", "value": "celsius" },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#ff7043" } }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Feuchtigkeit" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "right" },
+                { "id": "unit", "value": "percent" },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#42a5f5" } }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": { "mode": "multi" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Sensoren Detail",
+        "type": "row",
+        "gridPos": { "x": 0, "y": 16, "w": 24, "h": 1 },
+        "collapsed": false
+      },
+      {
+        "id": 6,
+        "title": "Temperatur",
+        "type": "gauge",
+        "gridPos": { "x": 0, "y": 17, "w": 6, "h": 5 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT ROUND(temperature, 1) AS 'Temperatur' FROM sensor_data ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 15,
+            "max": 35,
+            "unit": "celsius",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "blue" },
+                { "value": 18, "color": "green" },
+                { "value": 24, "color": "yellow" },
+                { "value": 28, "color": "red" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Feuchtigkeit",
+        "type": "gauge",
+        "gridPos": { "x": 6, "y": 17, "w": 6, "h": 5 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT ROUND(humidity, 1) AS 'Feuchtigkeit' FROM sensor_data ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 100,
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "yellow" },
+                { "value": 30, "color": "green" },
+                { "value": 60, "color": "yellow" },
+                { "value": 70, "color": "red" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Luftdruck",
+        "type": "stat",
+        "gridPos": { "x": 12, "y": 17, "w": 6, "h": 5 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT ROUND(pressure, 0) AS 'Luftdruck' FROM sensor_data ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "pressurehpa",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "blue" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "colorMode": "background",
+          "textMode": "value"
+        }
+      },
+      {
+        "id": 9,
+        "title": "Bewegung",
+        "type": "stat",
+        "gridPos": { "x": 18, "y": 17, "w": 6, "h": 5 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT IF(movement_detected, 'Ja', 'Nein') AS 'Bewegung' FROM sensor_data ORDER BY id DESC LIMIT 1",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "Ja": { "text": "Ja", "color": "green" }, "Nein": { "text": "Nein", "color": "dark-gray" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "dark-gray" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "colorMode": "background",
+          "textMode": "value"
+        }
+      },
+      {
+        "id": 11,
+        "title": "Temperatur und Feuchtigkeit",
+        "type": "timeseries",
+        "gridPos": { "x": 0, "y": 22, "w": 12, "h": 8 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT timestamp AS time, temperature AS 'Temperatur' FROM sensor_data WHERE $__timeFilter(timestamp) ORDER BY timestamp ASC",
+            "format": "time_series",
+            "refId": "A"
+          },
+          {
+            "rawSql": "SELECT timestamp AS time, humidity AS 'Feuchtigkeit' FROM sensor_data WHERE $__timeFilter(timestamp) ORDER BY timestamp ASC",
+            "format": "time_series",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": { "lineWidth": 2, "fillOpacity": 10 }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "Temperatur" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "left" },
+                { "id": "unit", "value": "celsius" },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#ff7043" } }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Feuchtigkeit" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "right" },
+                { "id": "unit", "value": "percent" },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#42a5f5" } }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": { "mode": "multi" },
+          "legend": { "displayMode": "list", "placement": "bottom" }
+        }
+      },
+      {
+        "id": 12,
+        "title": "Luftqualitaet und Bewegung",
+        "type": "timeseries",
+        "gridPos": { "x": 12, "y": 22, "w": 12, "h": 8 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT timestamp AS time, gas_resistance AS 'Luftqualitaet (Ohm)' FROM sensor_data WHERE $__timeFilter(timestamp) ORDER BY timestamp ASC",
+            "format": "time_series",
+            "refId": "A"
+          },
+          {
+            "rawSql": "SELECT timestamp AS time, CAST(movement_detected AS UNSIGNED) AS 'Bewegung' FROM sensor_data WHERE $__timeFilter(timestamp) ORDER BY timestamp ASC",
+            "format": "time_series",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": { "lineWidth": 2, "fillOpacity": 10 }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "Luftqualitaet (Ohm)" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "left" },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#66bb6a" } }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Bewegung" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "right" },
+                { "id": "custom.drawStyle", "value": "bars" },
+                { "id": "min", "value": 0 },
+                { "id": "max", "value": 1 },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#ab47bc" } }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": { "mode": "multi" },
+          "legend": { "displayMode": "list", "placement": "bottom" }
+        }
+      },
+      {
+        "id": 20,
+        "title": "Verlaufstabelle",
+        "type": "row",
+        "gridPos": { "x": 0, "y": 30, "w": 24, "h": 1 },
+        "collapsed": false
+      },
+      {
+        "id": 13,
+        "title": "Sensor-Verlauf",
+        "type": "table",
+        "gridPos": { "x": 0, "y": 31, "w": 24, "h": 10 },
+        "datasource": { "type": "mysql", "uid": "${DS_MARIADB}" },
+        "targets": [
+          {
+            "rawSql": "SELECT timestamp AS 'Zeitpunkt', estimated_occupancy AS 'Gaeste', ac_recommendation AS 'Klimastufe', ROUND(temperature, 1) AS 'Temp (C)', ROUND(humidity, 1) AS 'Feucht (%)', ROUND(pressure, 0) AS 'Druck (hPa)', ROUND(gas_resistance, 0) AS 'Gas (Ohm)', IF(movement_detected, 'Ja', 'Nein') AS 'Bewegung' FROM sensor_data WHERE $__timeFilter(timestamp) ORDER BY timestamp DESC LIMIT 100",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "Gaeste" },
+              "properties": [
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "value": null, "color": "green" },
+                      { "value": 45, "color": "yellow" },
+                      { "value": 70, "color": "orange" },
+                      { "value": 95, "color": "red" }
+                    ]
+                  }
+                },
+                { "id": "custom.displayMode", "value": "color-background" }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Klimastufe" },
+              "properties": [
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "value": null, "color": "blue" },
+                      { "value": 3, "color": "green" },
+                      { "value": 4, "color": "orange" },
+                      { "value": 5, "color": "red" }
+                    ]
+                  }
+                },
+                { "id": "custom.displayMode", "value": "color-background" }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "showHeader": true,
+          "footer": { "show": false }
+        }
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "annotations": {
+      "list": []
+    }
+  },
+  "__inputs": [
+    {
+      "name": "DS_MARIADB",
+      "label": "MariaDB",
+      "description": "MySQL/MariaDB Datenquelle fuer sensor_db",
+      "type": "datasource",
+      "pluginId": "mysql",
+      "pluginName": "MySQL"
+    }
+  ],
+  "overwrite": true
+}
