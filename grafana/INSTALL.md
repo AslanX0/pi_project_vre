@@ -31,6 +31,7 @@
 
 ```bash
 pip install fastapi uvicorn[standard] pymysql numpy
+cd backend
 python app.py
 ```
 
