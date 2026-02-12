@@ -1,0 +1,1 @@
+from .regressionsanalyse import PersonEstimator
