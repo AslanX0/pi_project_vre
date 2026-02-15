@@ -4,6 +4,6 @@ pymysql
 numpy
 
 # Raspberry Pi only
-# RPi.GPIO
-# bme680
-# mariadb
+RPi.GPIO
+bme680
+#mariadb

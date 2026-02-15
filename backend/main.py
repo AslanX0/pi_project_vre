@@ -1,143 +1,85 @@
-# Hauptskript - Raspberry Pi Sensorstation (BME680 + PIR, speichert in MariaDB)
+# Raspberry Pi Sensorstation – BME680 + PIR mit MariaDB-Anbindung
 
-import RPi.GPIO as GPIO
-import mariadb
-import sys
-import time
+import sys, time
 from datetime import datetime
+import RPi.GPIO as GPIO
+import pymysql
+from rpi_sensors.sensors import alle_sensoren_auslesen
+from rpi_sensors.motion_sensor import bewegung_ueberwachen
+from rpi_sensors.bme680_sensor import messen_intervall
 
-from sensors import read_all_sensors, bewegung, temperatur
-
-db_config = {
-    'host': 'localhost',
-    'port': 3306,
-    'user': 'root',
-    'password': 'root',
-    'database': 'sensor_db'
-}
-
-try:
-    conn = mariadb.connect(**db_config)
-    cursor = conn.cursor()
-    print("Datenbankverbindung erfolgreich!")
-except mariadb.Error as e:
-    print(f"Fehler bei Datenbankverbindung: {e}")
-    sys.exit(1)
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS sensor_data (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    timestamp DATETIME NOT NULL,
-    temperature FLOAT NOT NULL,
-    pressure FLOAT,
-    humidity FLOAT,
-    gas_resistance FLOAT,
-    movement_detected BOOLEAN NOT NULL,
-    estimated_occupancy INT DEFAULT NULL,
-    ac_recommendation INT DEFAULT NULL,
-    data_source CHAR(4) NOT NULL DEFAULT 'REAL'
-)
-""")
-conn.commit()
-
-for col_sql in [
-    "ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS estimated_occupancy INT DEFAULT NULL",
-    "ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS ac_recommendation INT DEFAULT NULL",
-    "ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS data_source CHAR(4) NOT NULL DEFAULT 'REAL'"
-]:
-    try:
-        cursor.execute(col_sql)
-        conn.commit()
-    except mariadb.Error:
-        pass
-
-print("Datenbank-Schema aktualisiert")
+DB_CONFIG = {'host':'localhost','port':3306,'user':'root','password':'root','database':'sensor_db','cursorclass':pymysql.cursors.Cursor}
+MESSINTERVALL = 300
 
 
-def main_loop():
-    print("\n--- Starte Hauptschleife (Alle Sensoren + Datenbank) ---")
-    print("Druecke STRG+C zum Beenden.\n")
-    INTERVALL = 300
+def db_verbinden():
+    try: return pymysql.connect(**DB_CONFIG)
+    except pymysql.MySQLError as e: print(f"DB-Fehler: {e}"); sys.exit(1)
 
+
+def tabelle_erstellen(cursor):
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS sensor_data ("
+        "id INT AUTO_INCREMENT PRIMARY KEY, "
+        "timestamp DATETIME NOT NULL, "
+        "temperature FLOAT NOT NULL, "
+        "pressure FLOAT, "
+        "humidity FLOAT, "
+        "gas_resistance FLOAT, "
+        "movement_detected BOOLEAN NOT NULL, "
+        "estimated_occupancy INT DEFAULT NULL, "
+        "ac_recommendation INT DEFAULT NULL)"
+    )
+
+
+def daten_speichern(cursor, conn, daten):
+    if daten['temperatur'] is None:
+        print("Keine Sensordaten – übersprungen")
+        return
+    cursor.execute(
+        "INSERT INTO sensor_data (timestamp, temperature, pressure, humidity, gas_resistance, movement_detected) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (datetime.now(), daten['temperatur'], daten['druck'], daten['feuchtigkeit'], daten['gas'], daten['bewegung'])
+    )
+    conn.commit()
+    print("Daten gespeichert")
+
+
+def ausgabe(d):
+    gas = f"{d['gas']} Ω" if d['gas'] else "(aufheizen)"
+    print(f"{d['temperatur']} °C | {d['druck']} hPa | {d['feuchtigkeit']} %RH | Gas: {gas}")
+
+
+def hauptschleife(cursor, conn):
     try:
         while True:
-            timestamp = datetime.now()
-            print(f"\n[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] Lese Sensoren...")
-            data = read_all_sensors()
-
-            if data['temperature'] is not None:
-                cursor.execute(
-                    """INSERT INTO sensor_data
-                       (timestamp, temperature, pressure, humidity, gas_resistance,
-                        movement_detected, data_source)
-                       VALUES (?, ?, ?, ?, ?, ?, 'REAL')""",
-                    (timestamp, data['temperature'], data['pressure'],
-                     data['humidity'], data['gas_resistance'], data['movement_detected'])
-                )
-                conn.commit()
-                print(f"  => Daten gespeichert! (Quelle: REAL)")
-            else:
-                print("  => Keine Temperaturdaten - nicht gespeichert.")
-
-            print(f"  Naechste Messung in {INTERVALL} Sekunden...")
-            time.sleep(INTERVALL)
+            print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] Lese Sensoren...")
+            daten = alle_sensoren_auslesen()
+            daten_speichern(cursor, conn, daten)
+            print(f"Nächste Messung in {MESSINTERVALL}s")
+            time.sleep(MESSINTERVALL)
     except KeyboardInterrupt:
-        GPIO.cleanup()
-        conn.close()
-        print("Verbindung geschlossen. Auf Wiedersehen!")
-
-
-def show_last_entries(count=10):
-    print(f"\n--- Letzte {count} Eintraege aus der Datenbank ---\n")
-    cursor.execute("SELECT * FROM sensor_data ORDER BY id DESC LIMIT ?", (count,))
-    rows = cursor.fetchall()
-
-    if rows:
-        print(f"{'ID':<5} {'Timestamp':<20} {'Temp':>8} {'Druck':>10} {'Feucht.':>8} "
-              f"{'Gas':>12} {'Bew.':<6} {'Gaeste':>7} {'AC':>4} {'Quelle':<6}")
-        print("-" * 100)
-        for row in rows:
-            mov = "Ja" if row[6] else "Nein"
-            gas = f"{row[5]:.0f}" if row[5] else "N/A"
-            occ = str(row[7]) if row[7] is not None else "-"
-            ac = str(row[8]) if row[8] is not None else "-"
-            src = row[9] if len(row) > 9 and row[9] else "REAL"
-            print(f"{row[0]:<5} {str(row[1]):<20} {row[2]:>7.2f}C {row[3]:>9.2f} "
-                  f"{row[4]:>7.2f}% {gas:>12} {mov:<6} {occ:>7} {ac:>4} {src:<6}")
-    else:
-        print("Keine Eintraege vorhanden.")
+        print("\nMessung beendet.")
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 50)
-    print("   RASPBERRY PI SENSOR STATION")
-    print("   BME680 (Temp/Druck/Feuchtigkeit/Gas) + PIR")
-    print("=" * 50)
+    conn = db_verbinden()
+    cursor = conn.cursor()
+    tabelle_erstellen(cursor)
+    conn.commit()
 
-    print("\nWaehle eine Funktion:\n")
-    print("  1 - Nur Bewegungssensor (PIR)")
-    print("  2 - Nur Umweltsensor (BME680)")
-    print("  3 - Alle Sensoren + Datenbank speichern")
-    print("  4 - Letzte Datenbankeintraege anzeigen")
-    print("  0 - Beenden")
+    print("\n  1 - Bewegungssensor (PIR)\n  2 - Umweltsensor (BME680)\n  3 - Alle Sensoren + Datenbank\n  0 - Beenden\n")
+    wahl = input("Auswahl: ").strip()
 
-    wahl = input("\nDeine Wahl: ").strip()
+    aktionen = {
+        "1": bewegung_ueberwachen,
+        "2": lambda: messen_intervall(intervall=5, callback=ausgabe),
+        "3": lambda: hauptschleife(cursor, conn),
+        "0": lambda: print("Beendet.")
+    }
 
-    if wahl == "1":
-        bewegung()
-    elif wahl == "2":
-        temperatur()
-    elif wahl == "3":
-        main_loop()
-    elif wahl == "4":
-        show_last_entries(10)
-    elif wahl == "0":
-        print("Auf Wiedersehen!")
-    else:
-        print("Ungueltige Eingabe!")
+    aktionen.get(wahl, lambda: print("Ungültige Eingabe"))()
 
     GPIO.cleanup()
-    try:
-        conn.close()
-    except:
-        pass
+    try: conn.close()
+    except: pass
