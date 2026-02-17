@@ -10,14 +10,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
 
-from database import get_db_connection
+from database import get_db_connection, db_config
+import pymysql
 from routes import data_router, occupancy_router, estimator_router, regression_router
 from routes.occupancy import estimator
 from routes.regression import regression, train_regression_from_db
 
 
 async def estimation_loop():
-    """Schaetzt Personenanzahl fuer alle neuen Datensaetze (alle 60s)."""
     while True:
         try:
             conn = get_db_connection()
@@ -66,8 +66,34 @@ async def regression_train_loop():
             print(f"[Regression] Trainingsfehler: {e}")
 
 
+def init_db():
+    conn = get_db_connection()
+    if conn is None:
+        print("[DB] WARNUNG: Keine Datenbankverbindung")
+        return
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS sensor_data ("
+            "id INT AUTO_INCREMENT PRIMARY KEY, "
+            "timestamp DATETIME NOT NULL, "
+            "temperature FLOAT NOT NULL, "
+            "pressure FLOAT, "
+            "humidity FLOAT, "
+            "gas_resistance FLOAT, "
+            "movement_detected BOOLEAN NOT NULL, "
+            "estimated_occupancy INT DEFAULT NULL, "
+            "ac_recommendation INT DEFAULT NULL)"
+        )
+        conn.commit()
+        print("[DB] Tabelle sensor_data bereit")
+    finally:
+        conn.close()
+
+
 @asynccontextmanager
 async def lifespan(app):
+    init_db()
     task_est = asyncio.create_task(estimation_loop())
     task_reg = asyncio.create_task(regression_train_loop())
     print("[Server] Hintergrund-Tasks gestartet")
@@ -101,8 +127,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("   ASIA RESTAURANT - Sensor Dashboard")
     print("   " + "=" * 56)
-    print("   Dashboard:      http://localhost:5000/")
-    print("   API Docs:       http://localhost:5000/docs")
-    print("   Regression:     http://localhost:5000/api/regression/status")
+    print("   Dashboard:      http://localhost:8000/")
+    print("   API Docs:       http://localhost:8000/docs")
+    print("   Regression:     http://localhost:8000/api/regression/status")
     print("=" * 60 + "\n")
-    uvicorn.run(app, host="localhost", port=5000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

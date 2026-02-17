@@ -57,17 +57,28 @@ function formatTime(ts) {
     return new Date(ts.replace(' ', 'T')).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 }
 
+function getOccupancyRange(temperature) {
+    if (temperature == null) return '--';
+    switch (true) {
+        case temperature < 18.7:  return '1-20';
+        case temperature < 20.1:  return '21-40';
+        case temperature < 21.5:  return '41-60';
+        case temperature < 22.9:  return '61-80';
+        case temperature < 24.3:  return '81-100';
+        default:                  return '101-120';
+    }
+}
+
 async function loadDashboard() {
-    const occ = await fetchApi('/api/occupancy/current');
-    if (occ?.success) {
-        const d = occ.data;
-        document.getElementById('currentOccupancy').textContent = d.estimated_persons ?? '--';
-        document.getElementById('currentOccPercent').textContent = (d.occupancy_percent ?? 0).toFixed(1) + ' % Auslastung';
-        if (d.sensors) {
-            document.getElementById('currentTemp').textContent = d.sensors.temperature != null ? d.sensors.temperature.toFixed(1) + ' °C' : '--';
-            document.getElementById('currentHumidity').textContent = d.sensors.humidity != null ? d.sensors.humidity.toFixed(1) + ' %' : '--';
-            document.getElementById('currentVOC').textContent = d.sensors.gas_resistance != null ? Math.round(d.sensors.gas_resistance).toLocaleString() + ' Ω' : '--';
-        }
+    const res = await fetchApi('/api/data/latest');
+    if (res?.success && res.data) {
+        const d = res.data;
+        document.getElementById('currentTemp').textContent = d.temperature != null ? d.temperature.toFixed(1) + ' °C' : '--';
+        document.getElementById('currentHumidity').textContent = d.humidity != null ? d.humidity.toFixed(1) + ' %' : '--';
+        document.getElementById('currentVOC').textContent = d.gas_resistance != null ? Math.round(d.gas_resistance).toLocaleString() + ' Ω' : '--';
+        document.getElementById('currentOccupancy').textContent = getOccupancyRange(d.temperature);
+        const percent = d.estimated_occupancy != null ? (d.estimated_occupancy / 120 * 100).toFixed(1) : '0.0';
+        document.getElementById('currentOccPercent').textContent = percent + ' % Auslastung';
     }
     document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('de-DE');
 }
