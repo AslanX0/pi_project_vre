@@ -146,9 +146,9 @@ class TemperatureRegression:
     def get_status(self):
         return {
             "trained": self.slope is not None,
-            "slope": round(self.slope, 6) if self.slope else None,
-            "intercept": round(self.intercept, 4) if self.intercept else None,
-            "r_squared": round(self.r_squared, 4) if self.r_squared else None,
+            "slope": round(self.slope, 6) if self.slope is not None else None,
+            "intercept": round(self.intercept, 4) if self.intercept is not None else None,
+            "r_squared": round(self.r_squared, 4) if self.r_squared is not None else None,
             "n_samples": self.n_samples,
             "trained_at": self.trained_at,
             "scenarios": self.predict_scenarios()
