@@ -1,10 +1,11 @@
 # Routen fuer Lineare Regression (/api/regression/*)
-# Personen -> Temperatur Vorhersage
+# Zeit -> Temperatur / Feuchte / Luftqualitaet
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
 import pymysql
+import numpy as np
 
 from database import get_db_connection
 from modules import TemperatureRegression
@@ -81,65 +82,109 @@ def api_regression_status():
     return {"success": True, "data": status}
 
 
+def _lin_reg(x_arr, y_raw):
+    """Inline lineare Regression. Filtert None-Werte heraus."""
+    pairs = [(x, y) for x, y in zip(x_arr, y_raw) if y is not None]
+    if len(pairs) < 3:
+        return None, None
+    x = np.array([p[0] for p in pairs], dtype=float)
+    y = np.array([p[1] for p in pairs], dtype=float)
+    n = len(x)
+    sx, sy = np.sum(x), np.sum(y)
+    denom = n * np.sum(x ** 2) - sx ** 2
+    if denom == 0:
+        return None, None
+    slope = float((n * np.sum(x * y) - sx * sy) / denom)
+    intercept = float((sy - slope * sx) / n)
+    return slope, intercept
+
+
+def _build_series(x_ms, x_hours, y_raw, slope, intercept, last_ts, epoch_dt, n_predictions=5):
+    """Baut Datenpunkte, Trendlinie und Prognose fuer eine Variable auf."""
+    points = [{"x": xm, "y": y} for xm, y in zip(x_ms, y_raw) if y is not None]
+
+    trend = None
+    predictions = []
+    if slope is not None and len(x_hours) >= 2:
+        trend = [
+            {"x": x_ms[0], "y": round(slope * x_hours[0] + intercept, 2)},
+            {"x": x_ms[-1], "y": round(slope * x_hours[-1] + intercept, 2)}
+        ]
+        for i in range(1, n_predictions + 1):
+            future_ts = last_ts + timedelta(minutes=5 * i)
+            x_h = (future_ts - epoch_dt).total_seconds() / 3600
+            predictions.append({
+                "x": int(future_ts.timestamp() * 1000),
+                "y": round(slope * x_h + intercept, 2)
+            })
+
+    return {"points": points, "trend": trend, "predictions": predictions}
+
+
 @router.get("/api/regression/scatter")
 def api_regression_scatter(hours: int = Query(default=0)):
-    """Scatter-Daten: Zeit (x, Unix-ms) vs Temperatur (y) fuer Diagramm.
-    hours=0 liefert alle verfuegbaren Daten."""
+    """Zeitreihen-Daten fuer Temperatur, Feuchte und Luftqualitaet mit Trendlinie und Prognose."""
     conn = get_db_connection()
     if conn is None:
         return JSONResponse(status_code=500,
                             content={"success": False, "error": "Datenbankverbindung fehlgeschlagen"})
     try:
         cursor = conn.cursor()
-
         if hours > 0:
             time_ago = datetime.now() - timedelta(hours=hours)
             cursor.execute("""
-                SELECT timestamp, temperature
+                SELECT timestamp, temperature, humidity, gas_resistance
                 FROM sensor_data
-                WHERE timestamp >= %s
-                  AND temperature IS NOT NULL
-                  AND timestamp IS NOT NULL
+                WHERE timestamp >= %s AND timestamp IS NOT NULL
                 ORDER BY timestamp ASC
             """, (time_ago,))
         else:
             cursor.execute("""
-                SELECT timestamp, temperature
+                SELECT timestamp, temperature, humidity, gas_resistance
                 FROM sensor_data
-                WHERE temperature IS NOT NULL
-                  AND timestamp IS NOT NULL
+                WHERE timestamp IS NOT NULL
                 ORDER BY timestamp ASC
             """)
 
         rows = cursor.fetchall()
-        # x als Unix-Millisekunden, damit Chart.js die Achse als Zeitachse formatieren kann
-        points = [
-            {"x": int(row['timestamp'].timestamp() * 1000), "y": row['temperature']}
-            for row in rows
-        ]
+        if not rows:
+            empty = {"points": [], "trend": None, "predictions": []}
+            return {"success": True, "data": {
+                "temperature": empty, "humidity": empty, "gas": empty, "count": 0
+            }}
 
-        # Regressionslinie ueber die gesamte Zeitspanne
-        regression_line = None
-        if regression.slope is not None and regression.epoch_offset is not None and rows:
+        # Epoch-Referenzpunkt
+        if regression.epoch_offset is not None:
             epoch_dt = datetime.fromtimestamp(regression.epoch_offset)
-            ts_first = rows[0]['timestamp']
-            ts_last = rows[-1]['timestamp']
-            x_first_h = (ts_first - epoch_dt).total_seconds() / 3600
-            x_last_h = (ts_last - epoch_dt).total_seconds() / 3600
-            regression_line = {
-                "slope": regression.slope,
-                "intercept": regression.intercept,
-                "r_squared": regression.r_squared,
-                "points": [
-                    {"x": int(ts_first.timestamp() * 1000), "y": regression.predict(x_first_h)},
-                    {"x": int(ts_last.timestamp() * 1000), "y": regression.predict(x_last_h)}
-                ]
-            }
+        else:
+            epoch_dt = rows[0]['timestamp']
+
+        x_ms = [int(r['timestamp'].timestamp() * 1000) for r in rows]
+        x_hours = [(r['timestamp'] - epoch_dt).total_seconds() / 3600 for r in rows]
+        last_ts = rows[-1]['timestamp']
+
+        temp_vals = [r.get('temperature') for r in rows]
+        hum_vals = [r.get('humidity') for r in rows]
+        gas_vals = [r.get('gas_resistance') for r in rows]
+
+        # Fuer Temperatur: trainiertes Modell bevorzugen, sonst inline berechnen
+        if regression.slope is not None and regression.epoch_offset is not None:
+            t_slope, t_intercept = regression.slope, regression.intercept
+        else:
+            t_slope, t_intercept = _lin_reg(x_hours, temp_vals)
+
+        h_slope, h_intercept = _lin_reg(x_hours, hum_vals)
+        g_slope, g_intercept = _lin_reg(x_hours, gas_vals)
 
         return {"success": True, "data": {
-            "points": points,
-            "count": len(points),
-            "regression_line": regression_line
+            "temperature": _build_series(x_ms, x_hours, temp_vals, t_slope, t_intercept, last_ts, epoch_dt),
+            "humidity":    _build_series(x_ms, x_hours, hum_vals,  h_slope, h_intercept, last_ts, epoch_dt),
+            "gas":         _build_series(x_ms, x_hours, gas_vals,  g_slope, g_intercept, last_ts, epoch_dt),
+            "count": len(rows),
+            "regression_line": {  # Rueckwaertskompatibilitaet fuer Status-Karten
+                "slope": t_slope, "intercept": t_intercept,
+                "r_squared": regression.r_squared
+            } if t_slope is not None else None
         }}
     except pymysql.Error as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})

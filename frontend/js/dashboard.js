@@ -127,13 +127,99 @@ async function loadDashboardCharts() {
     createLineChart('chartOccupancy', labels, [{ label: 'Geschaetzte Personen', data: rows.map(r => r.estimated_occupancy ?? 0), borderColor: '#d4a853', backgroundColor: 'rgba(212,168,83,0.1)', fill: true }], 'Personen');
 }
 
+function buildRegressionChart(chartId, seriesData, label, unit, color) {
+    if (!seriesData) return;
+    const xFmt = value => {
+        const d = new Date(value);
+        return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+             + ' ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    };
+    const datasets = [];
+    if (seriesData.points && seriesData.points.length > 0) {
+        datasets.push({
+            label: label + ' (' + seriesData.points.length + ' Messpunkte)',
+            data: seriesData.points,
+            backgroundColor: color + '44',
+            borderColor: color,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+            order: 3
+        });
+    }
+    if (seriesData.trend && seriesData.trend.length >= 2) {
+        datasets.push({
+            label: 'Trendlinie',
+            data: seriesData.trend,
+            type: 'line',
+            borderColor: color,
+            borderWidth: 2,
+            borderDash: [6, 3],
+            pointRadius: 0,
+            fill: false,
+            tension: 0,
+            order: 2
+        });
+    }
+    if (seriesData.predictions && seriesData.predictions.length > 0) {
+        datasets.push({
+            label: 'Prognose (naechste 5 Messungen)',
+            data: seriesData.predictions,
+            backgroundColor: '#ff6b35',
+            borderColor: '#ff6b35',
+            pointRadius: 9,
+            pointHoverRadius: 11,
+            order: 1
+        });
+    }
+    if (state.charts[chartId]) {
+        state.charts[chartId].data.datasets = datasets;
+        state.charts[chartId].update();
+    } else {
+        state.charts[chartId] = new Chart(
+            document.getElementById(chartId).getContext('2d'), {
+                type: 'scatter',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            backgroundColor: '#1a1d27',
+                            borderColor: '#2a2d3a',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: ctx => {
+                                    if (ctx.dataset.label === 'Trendlinie') return '';
+                                    const prefix = ctx.dataset.label.startsWith('Prognose') ? 'Prognose: ' : '';
+                                    return `${prefix}${xFmt(ctx.parsed.x)}  –  ${ctx.parsed.y.toFixed(1)} ${unit}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Datum / Uhrzeit' },
+                            ticks: { callback: xFmt, maxTicksLimit: 8 },
+                            grid: { color: 'rgba(42, 45, 58, 0.5)' }
+                        },
+                        y: {
+                            title: { display: true, text: label + ' (' + unit + ')' },
+                            grid: { color: 'rgba(42, 45, 58, 0.5)' }
+                        }
+                    }
+                }
+            }
+        );
+    }
+}
+
 async function loadRegression() {
     const [regStatus, scatter] = await Promise.all([
         fetchApi('/api/regression/status'),
         fetchApi('/api/regression/scatter')
     ]);
 
-    // Status-Karten aktualisieren
     if (regStatus?.success) {
         const s = regStatus.data;
         if (s.trained) {
@@ -152,93 +238,15 @@ async function loadRegression() {
             document.getElementById('regR2Detail').textContent =
                 s.last_error || 'Noch nicht trainiert';
             document.getElementById('regSamples').textContent = '0';
-            document.getElementById('regFormula').textContent = 'y = a · x + b';
+            document.getElementById('regFormula').textContent = 'T = a · h + b';
         }
     }
 
-    // Scatterplot mit Regressionslinie
     if (scatter?.success) {
-        const scatterData = scatter.data;
-
-        // Datenpunkte
-        const datasets = [{
-            label: 'Messpunkte (' + scatterData.count + ')',
-            data: scatterData.points,
-            backgroundColor: 'rgba(212, 168, 83, 0.6)',
-            borderColor: '#d4a853',
-            pointRadius: 5,
-            pointHoverRadius: 7,
-            order: 2
-        }];
-
-        // Regressionslinie als eigener Line-Datensatz
-        if (scatterData.regression_line) {
-            const rl = scatterData.regression_line;
-            datasets.push({
-                label: `Regressionsgerade (R² = ${rl.r_squared.toFixed(4)})`,
-                data: rl.points,
-                type: 'line',
-                borderColor: '#c41e3a',
-                borderWidth: 3,
-                borderDash: [],
-                pointRadius: 0,
-                pointHoverRadius: 0,
-                fill: false,
-                tension: 0,
-                order: 1
-            });
-        }
-
-        // Chart erstellen oder aktualisieren
-        if (state.charts['chartScatter']) {
-            state.charts['chartScatter'].data.datasets = datasets;
-            state.charts['chartScatter'].update();
-        } else {
-            state.charts['chartScatter'] = new Chart(
-                document.getElementById('chartScatter').getContext('2d'), {
-                    type: 'scatter',
-                    data: { datasets },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { position: 'top' },
-                            tooltip: {
-                                backgroundColor: '#1a1d27',
-                                borderColor: '#2a2d3a',
-                                borderWidth: 1,
-                                callbacks: {
-                                    label: ctx => {
-                                        if (ctx.dataset.type === 'line') return '';
-                                        const d = new Date(ctx.parsed.x);
-                                        const dateStr = d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-                                        return `${dateStr}  –  ${ctx.parsed.y.toFixed(1)} °C`;
-                                    }
-                                }
-                            }
-                        },
-                        scales: {
-                            x: {
-                                title: { display: true, text: 'Datum / Uhrzeit' },
-                                ticks: {
-                                    callback: value => {
-                                        const d = new Date(value);
-                                        return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
-                                             + ' ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-                                    },
-                                    maxTicksLimit: 8
-                                },
-                                grid: { color: 'rgba(42, 45, 58, 0.5)' }
-                            },
-                            y: {
-                                title: { display: true, text: 'Temperatur (°C)' },
-                                grid: { color: 'rgba(42, 45, 58, 0.5)' }
-                            }
-                        }
-                    }
-                }
-            );
-        }
+        const d = scatter.data;
+        buildRegressionChart('chartScatter',            d.temperature, 'Temperatur',       '°C', '#ef4444');
+        buildRegressionChart('chartRegressionHumidity', d.humidity,    'Luftfeuchtigkeit',  '%',  '#3b82f6');
+        buildRegressionChart('chartRegressionGas',      d.gas,         'Luftqualitaet VOC', 'Ω',  '#d4a853');
     }
 }
 
@@ -269,6 +277,7 @@ async function loadSensors() {
     const hist = await fetchApi('/api/data/history?hours=168&limit=2000');
     if (hist?.success && hist.data.length) {
         const rows = hist.data, labels = rows.map(r => formatTime(r.timestamp));
+        createLineChart('chartTemperatureSensor', labels, [{ label: 'Temperatur (°C)', data: rows.map(r => r.temperature), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true }], '°C');
         createLineChart('chartGas', labels, [{ label: 'VOC (Ohm)', data: rows.map(r => r.gas_resistance), borderColor: '#d4a853', backgroundColor: 'rgba(212,168,83,0.1)', fill: true }], 'Ohm');
         createLineChart('chartPressure', labels, [{ label: 'Luftdruck (hPa)', data: rows.map(r => r.pressure), borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true }], 'hPa');
     }

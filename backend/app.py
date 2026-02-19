@@ -50,6 +50,28 @@ async def estimation_loop():
         await asyncio.sleep(60)
 
 
+async def data_retention_loop():
+    """Loescht Datensaetze aelter als 30 Tage. Laeuft einmal taeglich."""
+    while True:
+        await asyncio.sleep(24 * 3600)
+        try:
+            conn = get_db_connection()
+            if conn:
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "DELETE FROM sensor_data WHERE timestamp < NOW() - INTERVAL 30 DAY"
+                    )
+                    deleted = cursor.rowcount
+                    conn.commit()
+                    if deleted > 0:
+                        print(f"[Retention] {deleted} Datensaetze geloescht (aelter als 30 Tage)")
+                finally:
+                    conn.close()
+        except Exception as e:
+            print(f"[Retention] Fehler: {e}")
+
+
 async def regression_train_loop():
     """Trainiert Regressionsmodell alle 6 Stunden mit allen verfuegbaren Daten."""
     # Erstes Training direkt beim Start
@@ -96,12 +118,15 @@ async def lifespan(app):
     init_db()
     task_est = asyncio.create_task(estimation_loop())
     task_reg = asyncio.create_task(regression_train_loop())
+    task_ret = asyncio.create_task(data_retention_loop())
     print("[Server] Hintergrund-Tasks gestartet")
     print("  - AutoEstimator: Personenschaetzung alle 60s")
-    print("  - Regression: Modelltraining alle 48h")
+    print("  - Regression: Modelltraining alle 6h")
+    print("  - Retention: Datenbeschraenkung auf 30 Tage (taeglich)")
     yield
     task_est.cancel()
     task_reg.cancel()
+    task_ret.cancel()
 
 
 app = FastAPI(title="Asia Restaurant Sensor API", lifespan=lifespan)
