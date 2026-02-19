@@ -64,6 +64,14 @@
                     <span class="stat-detail" id="currentOccPercent">--</span>
                 </div>
             </div>
+            <div class="stat-card">
+                <div class="stat-icon"><span class="mdi mdi-air-conditioner"></span></div>
+                <div class="stat-info">
+                    <span class="stat-value" id="acMode">--</span>
+                    <span class="stat-label">Klimaanlage</span>
+                    <span class="stat-detail" id="acModeDetail">--</span>
+                </div>
+            </div>
         </div>
         <div class="card">
             <div class="card-header"><h3><span class="mdi mdi-chart-line"></span> Temperaturverlauf (24h)</h3></div>
@@ -165,6 +173,22 @@
             </div>
         </div>
         <div class="card">
+            <div class="card-header"><h3><span class="mdi mdi-tune"></span> Personenschaetzung kalibrieren</h3></div>
+            <div class="card-body">
+                <p style="color:var(--text-muted);margin-bottom:1rem;">Aktuelle Sensortemperatur als Referenzpunkt setzen. Beim Kalibrieren muss der Raum im jeweiligen Zustand sein.</p>
+                <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;">
+                    <button class="btn-primary" id="btnCalibBaseline"><span class="mdi mdi-thermometer-low"></span> Leerer Raum (0 Personen)</button>
+                    <button class="btn-primary" id="btnCalibFull"><span class="mdi mdi-thermometer-high"></span> Voller Raum (120 Personen)</button>
+                    <span class="stat-detail" id="calibStatus"></span>
+                </div>
+                <div style="margin-top:0.75rem;color:var(--text-muted);font-size:0.85rem;">
+                    Basis: <strong id="calibBaseTemp">--</strong> &nbsp;|&nbsp;
+                    Vollbelegung: <strong id="calibFullTemp">--</strong> &nbsp;|&nbsp;
+                    Status: <strong id="calibState">--</strong>
+                </div>
+            </div>
+        </div>
+        <div class="card">
             <div class="card-header"><h3><span class="mdi mdi-molecule-co2"></span> VOC / Gasresistenz (24h)</h3></div>
             <div class="card-body chart-container"><canvas id="chartGas"></canvas></div>
         </div>
@@ -201,6 +225,6 @@
     <p>Asia Restaurant &mdash; Letzte Aktualisierung: <span id="lastUpdate"></span></p>
 </footer>
 
-<script src="/static/js/dashboard.js?v=4"></script>
+<script src="/static/js/dashboard.js?v=5"></script>
 </body>
 </html>

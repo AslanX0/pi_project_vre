@@ -92,6 +92,13 @@ function formatTime(ts) {
 }
 
 
+const AC_MODE_LABELS = ['Aus', 'Stufe 1 (minimal)', 'Stufe 2', 'Stufe 3', 'Stufe 4', 'Stufe 5 (max)'];
+
+function getAcMode(persons) {
+    if (persons <= 0) return 0;
+    return Math.min(5, Math.max(1, Math.ceil(persons / 24)));
+}
+
 async function loadDashboard() {
     const res = await fetchApi('/api/data/latest');
     if (res?.success && res.data) {
@@ -99,10 +106,14 @@ async function loadDashboard() {
         document.getElementById('currentTemp').textContent = d.temperature != null ? d.temperature.toFixed(1) + ' °C' : '--';
         document.getElementById('currentHumidity').textContent = d.humidity != null ? d.humidity.toFixed(1) + ' %' : '--';
         document.getElementById('currentVOC').textContent = d.gas_resistance != null ? Math.round(d.gas_resistance).toLocaleString() + ' Ω' : '--';
-        const persons = d.estimated_occupancy;
+        const persons = d.estimated_occupancy ?? 0;
         document.getElementById('currentOccupancy').textContent = persons != null ? persons + ' Personen' : '--';
         const percent = persons != null ? (persons / 120 * 100).toFixed(1) : '0.0';
         document.getElementById('currentOccPercent').textContent = percent + ' % Auslastung';
+
+        const mode = getAcMode(persons);
+        document.getElementById('acMode').textContent = 'Stufe ' + mode;
+        document.getElementById('acModeDetail').textContent = AC_MODE_LABELS[mode];
     }
     document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('de-DE');
 }
@@ -232,7 +243,11 @@ async function loadRegression() {
 }
 
 async function loadSensors() {
-    const [occ, stats] = await Promise.all([fetchApi('/api/occupancy/current'), fetchApi('/api/data/stats')]);
+    const [occ, stats, estStatus] = await Promise.all([
+        fetchApi('/api/occupancy/current'),
+        fetchApi('/api/data/stats'),
+        fetchApi('/api/estimator/status')
+    ]);
     if (occ?.success && occ.data.sensors) {
         const s = occ.data.sensors;
         document.getElementById('sensorTemp').textContent = s.temperature != null ? s.temperature.toFixed(1) + ' °C' : '--';
@@ -245,6 +260,12 @@ async function loadSensors() {
         document.getElementById('sensorTempRange').textContent = stats.data.min_temp != null ? `Min ${stats.data.min_temp.toFixed(1)} / Max ${stats.data.max_temp.toFixed(1)} °C` : '--';
         document.getElementById('sensorHumidityAvg').textContent = stats.data.avg_humidity != null ? 'Durchschnitt: ' + stats.data.avg_humidity.toFixed(1) + ' %' : '--';
     }
+    if (estStatus?.success) {
+        const e = estStatus.data;
+        document.getElementById('calibBaseTemp').textContent = e.baseline_temp != null ? e.baseline_temp.toFixed(1) + ' °C' : '--';
+        document.getElementById('calibFullTemp').textContent = e.full_temp != null ? e.full_temp.toFixed(1) + ' °C' : '--';
+        document.getElementById('calibState').textContent = e.calibrated ? 'Kalibriert' : 'Standard (nicht kalibriert)';
+    }
     const hist = await fetchApi('/api/data/history?hours=168&limit=2000');
     if (hist?.success && hist.data.length) {
         const rows = hist.data, labels = rows.map(r => formatTime(r.timestamp));
@@ -252,6 +273,43 @@ async function loadSensors() {
         createLineChart('chartPressure', labels, [{ label: 'Luftdruck (hPa)', data: rows.map(r => r.pressure), borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true }], 'hPa');
     }
 }
+
+async function calibrateEstimator(endpoint, label) {
+    const statusEl = document.getElementById('calibStatus');
+    const latest = await fetchApi('/api/data/latest');
+    if (!latest?.success || latest.data.temperature == null) {
+        statusEl.textContent = 'Kein aktueller Temperaturwert verfuegbar';
+        statusEl.style.color = 'var(--danger)';
+        return;
+    }
+    const temp = latest.data.temperature;
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = `Setze ${label} auf ${temp.toFixed(1)} °C ...`;
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ temperature: temp })
+        });
+        const data = await res.json();
+        if (data.success) {
+            statusEl.style.color = 'var(--success)';
+            statusEl.textContent = `${label} auf ${temp.toFixed(1)} °C gesetzt`;
+            loadSensors();
+        } else {
+            statusEl.style.color = 'var(--danger)';
+            statusEl.textContent = data.error || 'Fehler';
+        }
+    } catch (e) {
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = 'Verbindungsfehler';
+    }
+}
+
+document.getElementById('btnCalibBaseline').addEventListener('click', () =>
+    calibrateEstimator('/api/estimator/baseline', 'Basistemperatur (leer)'));
+document.getElementById('btnCalibFull').addEventListener('click', () =>
+    calibrateEstimator('/api/estimator/fulltemp', 'Vollbelegungs-Temperatur'));
 
 async function loadTable() {
     const data = await fetchApi(`/api/data/table?page=${state.page}&per_page=${state.perPage}`);

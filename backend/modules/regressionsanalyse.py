@@ -1,4 +1,5 @@
 import numpy as np
+import math
 import json
 import os
 from datetime import datetime
@@ -9,18 +10,21 @@ REGRESSION_FILE = os.path.join(os.path.dirname(__file__), "regression_model.json
 MAX_PERSONS = 120
 MIN_PERSONS = 0
 
-DEFAULT_BASELINE = {
-    "gas_resistance": 200000,
-    "calibrated": False,
-    "calibration_date": None
-}
+# Standardwerte: leerer Raum bei 20°C, voller Raum (120 Personen) bei 30°C
+DEFAULT_BASELINE_TEMP = 20.0
+DEFAULT_FULL_TEMP = 30.0
 
 
 class PersonEstimator:
-    # Schätzt Personenanzahl anhand des VOC-Werts (BME680 gas_resistance)
+    """Schätzt Personenanzahl linear aus der Raumtemperatur.
+    Kalibrierung: set_baseline() bei leerem Raum, set_full_temp() bei vollem Raum aufrufen.
+    """
 
     def __init__(self):
-        self.baseline = DEFAULT_BASELINE.copy()
+        self.baseline_temp = DEFAULT_BASELINE_TEMP
+        self.full_temp = DEFAULT_FULL_TEMP
+        self.calibrated = False
+        self.calibration_date = None
         self._load_calibration()
 
     def _load_calibration(self):
@@ -29,61 +33,69 @@ class PersonEstimator:
         try:
             with open(CALIBRATION_FILE, "r") as f:
                 data = json.load(f)
-                self.baseline = data.get("baseline", DEFAULT_BASELINE.copy())
+            b = data.get("baseline", {})
+            if "baseline_temp" in b:
+                self.baseline_temp = b.get("baseline_temp", DEFAULT_BASELINE_TEMP)
+                self.full_temp = b.get("full_temp", DEFAULT_FULL_TEMP)
+                self.calibrated = b.get("calibrated", False)
+                self.calibration_date = b.get("calibration_date")
         except Exception as e:
             print(f"Fehler beim Laden der Kalibrierung: {e}")
 
     def _save_calibration(self):
         with open(CALIBRATION_FILE, "w") as f:
-            json.dump({"baseline": self.baseline}, f, indent=2, default=str)
+            json.dump({"baseline": {
+                "baseline_temp": self.baseline_temp,
+                "full_temp": self.full_temp,
+                "calibrated": self.calibrated,
+                "calibration_date": self.calibration_date
+            }}, f, indent=2, default=str)
 
-    def set_baseline(self, gas_resistance):
-        """Setzt die VOC-Baseline (bei leerem Raum aufrufen)."""
-        self.baseline = {
-            "gas_resistance": gas_resistance,
-            "calibrated": True,
-            "calibration_date": datetime.now().isoformat()
-        }
+    def set_baseline(self, temperature):
+        """Leerer Raum: aktuelle Temperatur als Nullpunkt setzen."""
+        self.baseline_temp = temperature
+        self.calibrated = True
+        self.calibration_date = datetime.now().isoformat()
         self._save_calibration()
 
-    def estimate(self, gas_resistance, movement_detected=False):
-        """
-        Berechnet Personenschätzung aus aktuellem Gaswiderstand.
-        Prinzip: Mehr Personen -> mehr VOC -> niedrigerer Gaswiderstand
-        """
-        if not gas_resistance or not self.baseline.get("gas_resistance"):
-            return {
-                "estimated_persons": 0,
-                "gas_ratio": None,
-                "movement_plausible": movement_detected
-            }
+    def set_full_temp(self, temperature):
+        """Voller Raum (120 Personen): Temperatur bei maximaler Belegung setzen."""
+        self.full_temp = temperature
+        self._save_calibration()
 
-        baseline_gas = self.baseline["gas_resistance"]
-        gas_ratio = gas_resistance / baseline_gas
+    def estimate(self, temperature):
+        """Schätzt Personenanzahl aus der Raumtemperatur (lineare Interpolation)."""
+        if temperature is None:
+            return {"estimated_persons": 0}
 
-        # Exponentielles Modell: persons = -ln(ratio) / k
-        if gas_ratio < 1.0:
-            k = np.log(2) / 60
-            raw_persons = -np.log(gas_ratio) / k
-        else:
-            raw_persons = 0
+        temp_range = self.full_temp - self.baseline_temp
+        if temp_range <= 0:
+            return {"estimated_persons": 0}
 
-        # Ohne Bewegung aber hohe VOC-Werte -> wahrscheinlich Störquelle
-        if not movement_detected and raw_persons > 5:
-            raw_persons *= 0.3
-
-        estimated = int(np.clip(round(raw_persons), MIN_PERSONS, MAX_PERSONS))
+        raw = (temperature - self.baseline_temp) / temp_range * MAX_PERSONS
+        estimated = int(np.clip(round(raw), MIN_PERSONS, MAX_PERSONS))
 
         return {
             "estimated_persons": estimated,
-            "gas_ratio": round(gas_ratio, 4),
-            "movement_detected": movement_detected,
-            "movement_plausible": movement_detected or estimated <= 5,
-            "baseline_calibrated": self.baseline.get("calibrated", False)
+            "temperature_used": temperature,
+            "baseline_temp": self.baseline_temp,
+            "full_temp": self.full_temp
         }
 
+    def get_ac_mode(self, estimated_persons):
+        """Empfohlener Klimaanlagenmodus: 0=Aus, 1-5 (linear nach Personenzahl)."""
+        if estimated_persons <= 0:
+            return 0
+        return min(5, max(1, math.ceil(estimated_persons / 24)))
+
     def get_status(self):
-        return {"baseline": self.baseline, "max_persons": MAX_PERSONS}
+        return {
+            "baseline_temp": self.baseline_temp,
+            "full_temp": self.full_temp,
+            "calibrated": self.calibrated,
+            "calibration_date": self.calibration_date,
+            "max_persons": MAX_PERSONS
+        }
 
 
 class TemperatureRegression:

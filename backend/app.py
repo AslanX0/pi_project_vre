@@ -25,7 +25,7 @@ async def estimation_loop():
                 try:
                     cursor = conn.cursor()
                     cursor.execute("""
-                        SELECT id, gas_resistance, movement_detected
+                        SELECT id, temperature
                         FROM sensor_data
                         WHERE estimated_occupancy IS NULL
                         ORDER BY id ASC
@@ -34,8 +34,7 @@ async def estimation_loop():
                     rows = cursor.fetchall()
                     for row in rows:
                         result = estimator.estimate(
-                            gas_resistance=row.get('gas_resistance'),
-                            movement_detected=bool(row.get('movement_detected', False))
+                            temperature=row.get('temperature')
                         )
                         persons = result['estimated_persons']
                         cursor.execute(
