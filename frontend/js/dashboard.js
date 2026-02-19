@@ -126,7 +126,7 @@ async function loadRegression() {
     if (regStatus?.success) {
         const s = regStatus.data;
         if (s.trained) {
-            document.getElementById('regSlope').textContent = s.slope.toFixed(4);
+            document.getElementById('regSlope').textContent = s.slope.toFixed(6) + ' °C/h';
             document.getElementById('regIntercept').textContent = s.intercept.toFixed(2) + ' °C';
             document.getElementById('regR2').textContent = s.r_squared.toFixed(4);
             document.getElementById('regR2Detail').textContent = (s.r_squared * 100).toFixed(1) + '% der Variation erklaert';
@@ -134,7 +134,7 @@ async function loadRegression() {
             document.getElementById('regTrainedAt').textContent = s.trained_at
                 ? 'Trainiert: ' + new Date(s.trained_at).toLocaleString('de-DE') : '';
             document.getElementById('regFormula').textContent =
-                `y = ${s.slope.toFixed(4)} · x + ${s.intercept.toFixed(2)}`;
+                `T = ${s.slope.toFixed(6)} · h + ${s.intercept.toFixed(2)} °C`;
         } else {
             ['regSlope', 'regIntercept', 'regR2'].forEach(id =>
                 document.getElementById(id).textContent = '--');
@@ -199,16 +199,24 @@ async function loadRegression() {
                                 callbacks: {
                                     label: ctx => {
                                         if (ctx.dataset.type === 'line') return '';
-                                        return `${ctx.parsed.x} Personen, ${ctx.parsed.y.toFixed(1)} °C`;
+                                        const d = new Date(ctx.parsed.x);
+                                        const dateStr = d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+                                        return `${dateStr}  –  ${ctx.parsed.y.toFixed(1)} °C`;
                                     }
                                 }
                             }
                         },
                         scales: {
                             x: {
-                                title: { display: true, text: 'Geschaetzte Personenanzahl' },
-                                min: 0,
-                                max: 130,
+                                title: { display: true, text: 'Datum / Uhrzeit' },
+                                ticks: {
+                                    callback: value => {
+                                        const d = new Date(value);
+                                        return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+                                             + ' ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+                                    },
+                                    maxTicksLimit: 8
+                                },
                                 grid: { color: 'rgba(42, 45, 58, 0.5)' }
                             },
                             y: {

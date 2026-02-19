@@ -26,19 +26,19 @@ def train_regression_from_db(hours=0):
         if hours > 0:
             time_ago = datetime.now() - timedelta(hours=hours)
             cursor.execute("""
-                SELECT estimated_occupancy, temperature
+                SELECT timestamp, temperature
                 FROM sensor_data
                 WHERE timestamp >= %s
                   AND temperature IS NOT NULL
-                  AND estimated_occupancy IS NOT NULL
+                  AND timestamp IS NOT NULL
                 ORDER BY timestamp ASC
             """, (time_ago,))
         else:
             cursor.execute("""
-                SELECT estimated_occupancy, temperature
+                SELECT timestamp, temperature
                 FROM sensor_data
                 WHERE temperature IS NOT NULL
-                  AND estimated_occupancy IS NOT NULL
+                  AND timestamp IS NOT NULL
                 ORDER BY timestamp ASC
             """)
 
@@ -49,13 +49,18 @@ def train_regression_from_db(hours=0):
             print(f"[Regression] {regression.last_error}")
             return False
 
-        persons_list = [row['estimated_occupancy'] for row in rows]
+        timestamps = [row['timestamp'] for row in rows]
         temp_list = [row['temperature'] for row in rows]
 
-        success = regression.train(persons_list, temp_list)
+        # X-Werte: Stunden seit erstem Datenpunkt
+        epoch = timestamps[0]
+        x_list = [(t - epoch).total_seconds() / 3600 for t in timestamps]
+        epoch_offset = epoch.timestamp()
+
+        success = regression.train(x_list, temp_list, epoch_offset=epoch_offset)
         if success:
             regression.last_error = None
-            print(f"[Regression] Trainiert: slope={regression.slope:.4f}, "
+            print(f"[Regression] Trainiert: slope={regression.slope:.6f} °C/h, "
                   f"intercept={regression.intercept:.2f}, R²={regression.r_squared:.4f}, "
                   f"n={regression.n_samples}")
         else:
@@ -76,20 +81,9 @@ def api_regression_status():
     return {"success": True, "data": status}
 
 
-@router.get("/api/regression/predict")
-def api_regression_predict(persons: int = Query(default=60, ge=0, le=120)):
-    temp = regression.predict(persons)
-    if temp is None:
-        return JSONResponse(status_code=400,
-                            content={"success": False, "error": "Modell noch nicht trainiert"})
-    return {"success": True, "data": {
-        "persons": persons, "predicted_temperature": temp
-    }}
-
-
 @router.get("/api/regression/scatter")
 def api_regression_scatter(hours: int = Query(default=0)):
-    """Scatter-Daten: Personenanzahl (x) vs Temperatur (y) fuer Diagramm.
+    """Scatter-Daten: Zeit (x, Unix-ms) vs Temperatur (y) fuer Diagramm.
     hours=0 liefert alle verfuegbaren Daten."""
     conn = get_db_connection()
     if conn is None:
@@ -101,48 +95,51 @@ def api_regression_scatter(hours: int = Query(default=0)):
         if hours > 0:
             time_ago = datetime.now() - timedelta(hours=hours)
             cursor.execute("""
-                SELECT estimated_occupancy, temperature
+                SELECT timestamp, temperature
                 FROM sensor_data
                 WHERE timestamp >= %s
                   AND temperature IS NOT NULL
-                  AND estimated_occupancy IS NOT NULL
+                  AND timestamp IS NOT NULL
                 ORDER BY timestamp ASC
             """, (time_ago,))
         else:
             cursor.execute("""
-                SELECT estimated_occupancy, temperature
+                SELECT timestamp, temperature
                 FROM sensor_data
                 WHERE temperature IS NOT NULL
-                  AND estimated_occupancy IS NOT NULL
+                  AND timestamp IS NOT NULL
                 ORDER BY timestamp ASC
             """)
 
         rows = cursor.fetchall()
-        points = [{"x": row['estimated_occupancy'], "y": row['temperature']} for row in rows]
+        # x als Unix-Millisekunden, damit Chart.js die Achse als Zeitachse formatieren kann
+        points = [
+            {"x": int(row['timestamp'].timestamp() * 1000), "y": row['temperature']}
+            for row in rows
+        ]
 
-        # Regressionslinie: mehrere Punkte fuer sichtbare Linie im Chart
+        # Regressionslinie ueber die gesamte Zeitspanne
         regression_line = None
-        if regression.slope is not None:
-            x_min = min((p['x'] for p in points), default=0)
-            x_max = max((p['x'] for p in points), default=120)
-            # Linie etwas ueber die Datenpunkte hinaus zeichnen
-            line_start = max(0, x_min - 5)
-            line_end = min(130, x_max + 5)
+        if regression.slope is not None and regression.epoch_offset is not None and rows:
+            epoch_dt = datetime.fromtimestamp(regression.epoch_offset)
+            ts_first = rows[0]['timestamp']
+            ts_last = rows[-1]['timestamp']
+            x_first_h = (ts_first - epoch_dt).total_seconds() / 3600
+            x_last_h = (ts_last - epoch_dt).total_seconds() / 3600
             regression_line = {
                 "slope": regression.slope,
                 "intercept": regression.intercept,
                 "r_squared": regression.r_squared,
                 "points": [
-                    {"x": line_start, "y": regression.predict(line_start)},
-                    {"x": line_end, "y": regression.predict(line_end)}
+                    {"x": int(ts_first.timestamp() * 1000), "y": regression.predict(x_first_h)},
+                    {"x": int(ts_last.timestamp() * 1000), "y": regression.predict(x_last_h)}
                 ]
             }
 
         return {"success": True, "data": {
             "points": points,
             "count": len(points),
-            "regression_line": regression_line,
-            "scenarios": regression.predict_scenarios()
+            "regression_line": regression_line
         }}
     except pymysql.Error as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})

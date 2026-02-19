@@ -86,7 +86,7 @@
             <div class="stat-card">
                 <div class="stat-icon"><span class="mdi mdi-chart-timeline-variant"></span></div>
                 <div class="stat-info">
-                    <span class="stat-label">Steigung (a)</span>
+                    <span class="stat-label">Steigung (a) [°C/h]</span>
                     <span class="stat-value" id="regSlope">--</span>
                 </div>
             </div>
@@ -116,15 +116,15 @@
         </div>
         <div class="card">
             <div class="card-header">
-                <h3><span class="mdi mdi-chart-scatter-plot-hexbin"></span> Scatterplot: Personen vs. Temperatur</h3>
-                <span class="stat-detail" id="regFormula">y = a * x + b</span>
+                <h3><span class="mdi mdi-chart-scatter-plot-hexbin"></span> Temperaturverlauf ueber Zeit</h3>
+                <span class="stat-detail" id="regFormula">T = a · h + b</span>
             </div>
             <div class="card-body chart-container-large"><canvas id="chartScatter"></canvas></div>
         </div>
         <div class="card">
             <div class="card-header"><h3><span class="mdi mdi-cog"></span> Modell-Verwaltung</h3></div>
             <div class="card-body">
-                <button class="btn-primary" id="btnRetrain"><span class="mdi mdi-refresh"></span> Modell neu trainieren (letzte 48h)</button>
+                <button class="btn-primary" id="btnRetrain"><span class="mdi mdi-refresh"></span> Modell neu trainieren (alle Daten)</button>
                 <span class="stat-detail" id="retrainStatus"></span>
             </div>
         </div>

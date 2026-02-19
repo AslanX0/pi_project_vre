@@ -88,8 +88,8 @@ class PersonEstimator:
 
 class TemperatureRegression:
     """
-    Lineare Regression: Personenanzahl -> Raumtemperatur
-    Wird mit Daten der letzten 48h trainiert.
+    Lineare Regression: Zeit -> Raumtemperatur
+    X = Stunden seit erstem Datenpunkt, Y = Temperatur in °C
     """
 
     def __init__(self):
@@ -99,14 +99,15 @@ class TemperatureRegression:
         self.n_samples = 0
         self.trained_at = None
         self.last_error = None
+        self.epoch_offset = None  # Unix-Timestamp des ersten Datenpunkts (Sekunden)
         self._load_model()
 
-    def train(self, persons_list, temperature_list):
-        """Trainiert das Modell mit gesammelten Messdaten."""
-        if len(persons_list) < 3:
+    def train(self, x_list, temperature_list, epoch_offset=None):
+        """Trainiert das Modell. x_list: Stunden seit erstem Datenpunkt."""
+        if len(x_list) < 3:
             return False
 
-        x = np.array(persons_list, dtype=float)
+        x = np.array(x_list, dtype=float)
         y = np.array(temperature_list, dtype=float)
         n = len(x)
 
@@ -128,6 +129,8 @@ class TemperatureRegression:
 
         self.n_samples = n
         self.trained_at = datetime.now().isoformat()
+        if epoch_offset is not None:
+            self.epoch_offset = epoch_offset
         self._save_model()
         return True
 
@@ -139,7 +142,8 @@ class TemperatureRegression:
                     "intercept": self.intercept,
                     "r_squared": self.r_squared,
                     "n_samples": self.n_samples,
-                    "trained_at": self.trained_at
+                    "trained_at": self.trained_at,
+                    "epoch_offset": self.epoch_offset
                 }, f, indent=2)
         except Exception as e:
             print(f"[Regression] Fehler beim Speichern: {e}")
@@ -155,26 +159,17 @@ class TemperatureRegression:
             self.r_squared = data.get("r_squared")
             self.n_samples = data.get("n_samples", 0)
             self.trained_at = data.get("trained_at")
+            self.epoch_offset = data.get("epoch_offset")
             if self.slope is not None:
                 print(f"[Regression] Modell geladen (R²={self.r_squared}, n={self.n_samples})")
         except Exception as e:
             print(f"[Regression] Fehler beim Laden: {e}")
 
-    def predict(self, persons):
-        """Gibt vorhergesagte Temperatur für Personenanzahl zurück."""
+    def predict(self, x_hours):
+        """Gibt vorhergesagte Temperatur für x Stunden seit epoch_offset zurück."""
         if self.slope is None:
             return None
-        return round(self.slope * persons + self.intercept, 2)
-
-    def predict_scenarios(self):
-        """Standardszenarien: leer, halb voll, voll."""
-        if self.slope is None:
-            return None
-        return [
-            {"persons": 0, "predicted_temp": self.predict(0), "label": "Leer"},
-            {"persons": 60, "predicted_temp": self.predict(60), "label": "Halb"},
-            {"persons": 120, "predicted_temp": self.predict(120), "label": "Voll"}
-        ]
+        return round(self.slope * x_hours + self.intercept, 2)
 
     def get_status(self):
         return {
@@ -184,5 +179,5 @@ class TemperatureRegression:
             "r_squared": round(self.r_squared, 4) if self.r_squared is not None else None,
             "n_samples": self.n_samples,
             "trained_at": self.trained_at,
-            "scenarios": self.predict_scenarios()
+            "scenarios": None
         }
