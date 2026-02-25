@@ -1,0 +1,6 @@
+.nul
+.venv/
+*__pycache__/
+pyvenv.cfg
+backend/modules/calibration.json
+backend/modules/regression_model.json
