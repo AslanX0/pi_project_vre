@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from routes.occupancy import estimator
+from vre_project.backend.routes.occupancy import estimator
 
 router = APIRouter()
 

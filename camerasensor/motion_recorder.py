@@ -41,14 +41,14 @@ PIR_GPIO_PIN = 17
 RECORD_SECONDS = 5
 
 # Zielverzeichnis fuer die Aufnahmen
-RECORDINGS_DIR = "/home/pi/recordings"
+RECORDINGS_DIR = "/home/it/pi_project_vre/recordings"
 
 # Datenbank-Zugangsdaten (Platzhalter -> bitte anpassen)
 DB_HOST = "localhost"
 DB_PORT = 3306
 DB_NAME = "motion_detection"
 DB_USER = "motion_user"
-DB_PASSWORD = "DEIN_PASSWORT_HIER"
+DB_PASSWORD = "test123"
 
 # ---------------------------------------------------------------------------
 # Logging-Setup (Konsolenausgabe mit Timestamp)

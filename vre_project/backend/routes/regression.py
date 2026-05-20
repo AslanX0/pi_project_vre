@@ -6,8 +6,8 @@ from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
 import pymysql
 
-from database import get_db_connection
-from modules import TemperatureRegression
+from vre_project.backend.database import get_db_connection
+from vre_project.backend.modules import TemperatureRegression
 
 regression = TemperatureRegression()
 

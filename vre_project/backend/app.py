@@ -10,11 +10,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
 
-from database import get_db_connection, db_config
+from vre_project.backend.database import get_db_connection, db_config
 import pymysql
-from routes import data_router, occupancy_router, estimator_router, regression_router
-from routes.occupancy import estimator
-from routes.regression import regression, train_regression_from_db
+from vre_project.backend.routes import data_router, occupancy_router, estimator_router, regression_router
+from vre_project.backend.routes.occupancy import estimator
+from vre_project.backend.routes.regression import regression, train_regression_from_db
 
 
 async def estimation_loop():

@@ -5,9 +5,9 @@ from datetime import datetime
 import pymysql
 
 import RPi.GPIO as GPIO
-from rpi_sensors.sensors import alle_sensoren_auslesen
-from rpi_sensors.motion_sensor import bewegung_ueberwachen
-from rpi_sensors.bme680_sensor import messen_intervall
+from vre_project.backend.rpi_sensors.sensors import alle_sensoren_auslesen
+from vre_project.backend.rpi_sensors.motion_sensor import bewegung_ueberwachen
+from vre_project.backend.rpi_sensors.bme680_sensor import messen_intervall
 
 DB_CONFIG = {'host':'localhost','port':3306,'user':'root','password':'root','database':'sensor_db','cursorclass':pymysql.cursors.Cursor}
 MESSINTERVALL = 300

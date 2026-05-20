@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
-from database import get_db_connection
-from modules import PersonEstimator
+from vre_project.backend.database import get_db_connection
+from vre_project.backend.modules import PersonEstimator
 
 router = APIRouter()
 estimator = PersonEstimator()
