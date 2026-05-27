@@ -90,7 +90,7 @@ class MotionRecorder:
         try:
             self.camera = Picamera2()
             video_config = self.camera.create_video_configuration(
-                main={"size": (1296, 972), "format": "YUV420"}
+                main={"size": (1280,720)}
             )
             self.camera.configure(video_config)
             logger.info("Kamera initialisiert (picamera2).")
