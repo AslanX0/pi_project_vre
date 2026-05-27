@@ -1,5 +1,8 @@
 """
-Kombinierte Abfrage aller Sensoren.
+Kombinierte Abfrage aller Sensoren (BME680 + PIR).
+
+Wird vom Hauptprogramm aufgerufen um einen kompletten Messwert fuer
+die Datenbank zu sammeln – Temperatur, Luftdruck, Feuchtigkeit, VOC und Bewegung.
 """
 
 import time
@@ -10,7 +13,7 @@ from .bme680_sensor import messen
 def alle_sensoren_auslesen(versuche=10):
     """
     Liest PIR und BME680 aus.
-    
+
     Rückgabe: Dict mit temperatur, druck, feuchtigkeit, gas, bewegung
     """
     ergebnis = {
@@ -20,16 +23,18 @@ def alle_sensoren_auslesen(versuche=10):
         'gas': None,
         'bewegung': False
     }
-    
+
+    # manchmal braucht der BME680 beim Start ein paar Versuche bis er bereit ist
     for _ in range(versuche):
         daten = messen()
         if daten:
             ergebnis.update(daten)
             break
         time.sleep(1)
-    
+
+    # PIR wird direkt ausgelesen, der antwortet sofort
     ergebnis['bewegung'] = ist_bewegung()
-    
+
     return ergebnis
 
 

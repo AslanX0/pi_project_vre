@@ -3,16 +3,16 @@
 """
 motion_recorder.py
 
-Bewegungsgesteuertes Aufnahmesystem fuer Raspberry Pi 4.
-Bei Erkennung einer Bewegung durch den PIR-Sensor (HW-416) wird eine
-5-sekuendige Videoaufnahme mit der Pi Camera V1.3 gestartet, lokal als
-MP4 gespeichert und ein Eintrag in eine MariaDB-Datenbank geschrieben.
+Laeuft auf dem Raspberry Pi 4 im Restaurant (Asia All You Can Eat).
+Kamera haengt ueber dem Eingang – sobald der PIR-Sensor eine Bewegung
+meldet wird ein 5-Sekunden-Video aufgenommen, als MP4 gespeichert
+und in der Datenbank eingetragen.
 
 Hardware:
-  - PIR OUT  -> GPIO17 (BCM)
-  - Pi Camera V1.3 ueber CSI
+  - PIR-Sensor (HW-416) an GPIO18
+  - Pi Camera V1.3 per CSI-Kabel
 
-Benoetigt: picamera2, gpiozero, mysql-connector-python, ffmpeg
+Braucht: picamera2, gpiozero, mysql-connector-python, ffmpeg
 """
 
 import os
@@ -31,16 +31,12 @@ import mysql.connector
 from mysql.connector import Error as MySQLError
 
 
-# ---------------------------------------------------------------------------
-# Konfiguration / Konstanten
-# ---------------------------------------------------------------------------
-
+# Konfiguration
 PIR_GPIO_PIN = 18
-
 RECORD_SECONDS = 5
-
 RECORDINGS_DIR = "/home/it/pi_project_vre/recordings"
 
+# Datenbank-Zugangsdaten (MariaDB, laeuft lokal auf dem Pi)
 DB_HOST = "localhost"
 DB_PORT = 3306
 DB_NAME = "motion_detection"
@@ -48,10 +44,7 @@ DB_USER = "motion_user"
 DB_PASSWORD = "test123"
 
 
-# ---------------------------------------------------------------------------
-# Logging-Setup
-# ---------------------------------------------------------------------------
-
+# Logging-Setup – alles landet im Terminal damit man es live verfolgen kann
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -72,12 +65,10 @@ class MotionRecorder:
         self.running = True
         self._record_lock = False
 
-    # -----------------------------------------------------------------------
-    # Initialisierung
-    # -----------------------------------------------------------------------
+    # -- Setup --
 
     def setup_directory(self):
-        """Legt das Aufnahmeverzeichnis an, falls es nicht existiert."""
+        # Aufnahmeordner anlegen falls er noch nicht existiert
         try:
             os.makedirs(RECORDINGS_DIR, exist_ok=True)
             logger.info("Aufnahmeverzeichnis bereit: %s", RECORDINGS_DIR)
@@ -86,11 +77,11 @@ class MotionRecorder:
             raise
 
     def setup_camera(self):
-        """Initialisiert die Pi Camera ueber picamera2."""
+        # Kamera initialisieren – 720p reicht fuer den Eingang
         try:
             self.camera = Picamera2()
             video_config = self.camera.create_video_configuration(
-                main={"size": (1280,720)}
+                main={"size": (1280, 720)}
             )
             self.camera.configure(video_config)
             logger.info("Kamera initialisiert (picamera2).")
@@ -99,10 +90,11 @@ class MotionRecorder:
             raise
 
     def setup_pir(self):
-        """Initialisiert den PIR-Bewegungssensor ueber gpiozero."""
+        # PIR-Sensor einrichten und kurz warten damit er sich einpegelt
         try:
             self.pir = MotionSensor(PIR_GPIO_PIN)
             logger.info("PIR-Sensor an GPIO%d wird kalibriert ...", PIR_GPIO_PIN)
+            # 5 Sekunden warten bis der Sensor stabil ist, sonst gibt es Fehlalarme
             self.pir.wait_for_no_motion(timeout=5)
             self.pir.when_motion = self.on_motion
             logger.info("PIR-Sensor bereit. Warte auf Bewegung ...")
@@ -111,7 +103,7 @@ class MotionRecorder:
             raise
 
     def setup_database(self):
-        """Stellt die Verbindung zur MariaDB-Datenbank her."""
+        # Verbindung zur lokalen MariaDB herstellen
         try:
             self.db_conn = mysql.connector.connect(
                 host=DB_HOST,
@@ -119,7 +111,6 @@ class MotionRecorder:
                 database=DB_NAME,
                 user=DB_USER,
                 password=DB_PASSWORD,
-                autocommit=False,
             )
             if self.db_conn.is_connected():
                 logger.info("Datenbankverbindung zu '%s' hergestellt.", DB_NAME)
@@ -127,13 +118,12 @@ class MotionRecorder:
             logger.error("Datenbankverbindung fehlgeschlagen: %s", exc)
             raise
 
-    # -----------------------------------------------------------------------
-    # Kernlogik
-    # -----------------------------------------------------------------------
+    # -- Kernlogik --
 
     def on_motion(self):
-        """Callback bei Bewegungserkennung."""
+        # wird aufgerufen sobald der PIR-Sensor anschlaegt
         if self.is_recording:
+            # laeuft bereits eine Aufnahme, ignorieren
             return
 
         self.is_recording = True
@@ -147,7 +137,7 @@ class MotionRecorder:
             logger.info("Zurueck im Wartezustand. Warte auf Bewegung ...")
 
     def record_and_store(self):
-        """Nimmt ein Video auf, konvertiert es zu MP4 und schreibt den DB-Eintrag."""
+        """Video aufnehmen, zu MP4 konvertieren und in DB speichern."""
         timestamp = datetime.now()
         ts_string = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
         base_name = f"motion_{ts_string}"
@@ -161,7 +151,7 @@ class MotionRecorder:
             encoder = H264Encoder(bitrate=10_000_000)
 
             self.camera.start()
-            time.sleep(1)
+            time.sleep(1)  # kurz warten damit die Kamera hochfahren kann
 
             self.camera.start_recording(encoder, FileOutput(h264_path))
             time.sleep(RECORD_SECONDS)
@@ -188,18 +178,21 @@ class MotionRecorder:
             return
 
         if os.path.getsize(h264_path) < 1000:
-            logger.error("H264-Datei ist leer oder beschädigt.")
+            logger.error("H264-Datei ist leer oder beschaedigt.")
             return
 
+        # h264 -> mp4 damit der Browser die Videos spaeter abspielen kann
         if not self.convert_to_mp4(h264_path, mp4_path):
             logger.error("MP4-Konvertierung fehlgeschlagen.")
             return
+
+        # TODO: vielleicht noch ein Thumbnail erstellen fuer das Dashboard
 
         self.insert_db_record(timestamp, base_name + ".mp4", mp4_path)
         logger.info("Aufnahme erfolgreich gespeichert.")
 
     def convert_to_mp4(self, h264_path, mp4_path):
-        """Konvertiert H264 nach MP4 mit ffmpeg."""
+        # ffmpeg-Aufruf: h264-Rohdaten in einen MP4-Container packen
         try:
             command = [
                 "ffmpeg",
@@ -233,7 +226,7 @@ class MotionRecorder:
             return False
 
     def insert_db_record(self, timestamp, dateiname, dateipfad):
-        """Schreibt einen Datensatz in die Tabelle 'recordings'."""
+        # Aufnahme in die Datenbank eintragen
         cursor = None
         try:
             if self.db_conn is None or not self.db_conn.is_connected():
@@ -260,12 +253,10 @@ class MotionRecorder:
             if cursor is not None:
                 cursor.close()
 
-    # -----------------------------------------------------------------------
-    # Lebenszyklus
-    # -----------------------------------------------------------------------
+    # -- Lebenszyklus --
 
     def run(self):
-        """Startet das System und haelt den Hauptthread offen."""
+        """Alles initialisieren und dann auf Bewegungen warten."""
         self.setup_directory()
         self.setup_database()
         self.setup_camera()
@@ -280,19 +271,13 @@ class MotionRecorder:
             self.cleanup()
 
     def cleanup(self):
-        """Gibt alle Ressourcen sauber frei."""
+        # Ressourcen ordentlich freigeben beim Beenden
         logger.info("Raeume Ressourcen auf ...")
 
         if self.camera is not None:
             try:
                 self.camera.stop_recording()
-            except Exception:
-                pass
-            try:
                 self.camera.stop()
-            except Exception:
-                pass
-            try:
                 self.camera.close()
                 logger.info("Kamera geschlossen.")
             except Exception as exc:

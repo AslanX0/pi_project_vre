@@ -1,5 +1,9 @@
 """
-BME680 Umweltsensor – Temperatur, Luftdruck, Feuchtigkeit und Gasqualität.
+BME680 Umweltsensor – Temperatur, Luftdruck, Feuchtigkeit und Gasqualitaet.
+
+Der Sensor misst auch den Gaswiderstand (VOC – flüchtige organische Verbindungen).
+Mehr Personen im Raum -> mehr CO2/VOC -> niedrigerer Gaswiderstand.
+Das wird in regressionsanalyse.py genutzt um die Personenanzahl zu schaetzen.
 """
 
 import bme680
@@ -19,6 +23,7 @@ def _initialisieren():
     """Sucht und konfiguriert den Sensor."""
     global _sensor
     
+    # der Sensor kann auf zwei verschiedenen I2C-Adressen sitzen, einfach beide probieren
     for adresse in [bme680.I2C_ADDR_PRIMARY, bme680.I2C_ADDR_SECONDARY]:
         try:
             _sensor = bme680.BME680(adresse)
@@ -58,6 +63,8 @@ def messen():
         'temperatur': round(daten.temperature, 2),
         'druck': round(daten.pressure, 2),
         'feuchtigkeit': round(daten.humidity, 2),
+        # gas_resistance nur ausgeben wenn der Heizer stabil ist, sonst ist der Wert unbrauchbar
+        # niedriger Wert = schlechtere Luft / mehr VOC im Raum
         'gas': round(daten.gas_resistance, 2) if daten.heat_stable and daten.gas_resistance else None
     }
 

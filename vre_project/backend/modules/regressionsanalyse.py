@@ -67,6 +67,7 @@ class PersonEstimator:
         gas_ratio = gas_resistance / baseline_gas
 
         # Exponentielles Modell: persons = -ln(ratio) / k
+        # k ist so gewaehlt dass bei 60 Personen der Gaswiderstand auf die Haelfte faellt
         if gas_ratio < 1.0:
             k = np.log(2) / 60
             raw_persons = -np.log(gas_ratio) / k
