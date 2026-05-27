@@ -30,28 +30,26 @@ from picamera2.outputs import FileOutput
 import mysql.connector
 from mysql.connector import Error as MySQLError
 
+
 # ---------------------------------------------------------------------------
 # Konfiguration / Konstanten
 # ---------------------------------------------------------------------------
 
-# GPIO-Pin (BCM-Nummerierung) an dem der PIR-OUT-Pin haengt
-PIR_GPIO_PIN = 17
+PIR_GPIO_PIN = 18
 
-# Dauer der Videoaufnahme in Sekunden
 RECORD_SECONDS = 5
 
-# Zielverzeichnis fuer die Aufnahmen
 RECORDINGS_DIR = "/home/it/pi_project_vre/recordings"
 
-# Datenbank-Zugangsdaten (Platzhalter -> bitte anpassen)
 DB_HOST = "localhost"
 DB_PORT = 3306
 DB_NAME = "motion_detection"
 DB_USER = "motion_user"
 DB_PASSWORD = "test123"
 
+
 # ---------------------------------------------------------------------------
-# Logging-Setup (Konsolenausgabe mit Timestamp)
+# Logging-Setup
 # ---------------------------------------------------------------------------
 
 logging.basicConfig(
@@ -70,12 +68,13 @@ class MotionRecorder:
         self.camera = None
         self.pir = None
         self.db_conn = None
-        # Flag, damit nicht waehrend einer laufenden Aufnahme erneut
-        # getriggert wird (PIR feuert sonst mehrfach hintereinander).
         self.is_recording = False
         self.running = True
+        self._record_lock = False
 
-    # -- Initialisierung -----------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Initialisierung
+    # -----------------------------------------------------------------------
 
     def setup_directory(self):
         """Legt das Aufnahmeverzeichnis an, falls es nicht existiert."""
@@ -90,9 +89,8 @@ class MotionRecorder:
         """Initialisiert die Pi Camera ueber picamera2."""
         try:
             self.camera = Picamera2()
-            # Video-Konfiguration; Aufloesung an die V1.3-Kamera angepasst
             video_config = self.camera.create_video_configuration(
-                main={"size": (1296, 972)}
+                main={"size": (1296, 972), "format": "YUV420"}
             )
             self.camera.configure(video_config)
             logger.info("Kamera initialisiert (picamera2).")
@@ -104,10 +102,8 @@ class MotionRecorder:
         """Initialisiert den PIR-Bewegungssensor ueber gpiozero."""
         try:
             self.pir = MotionSensor(PIR_GPIO_PIN)
-            # Kurze Einschwingzeit, damit der Sensor sich stabilisiert
             logger.info("PIR-Sensor an GPIO%d wird kalibriert ...", PIR_GPIO_PIN)
             self.pir.wait_for_no_motion(timeout=5)
-            # Callback registrieren
             self.pir.when_motion = self.on_motion
             logger.info("PIR-Sensor bereit. Warte auf Bewegung ...")
         except Exception as exc:
@@ -131,14 +127,12 @@ class MotionRecorder:
             logger.error("Datenbankverbindung fehlgeschlagen: %s", exc)
             raise
 
-    # -- Kernlogik -----------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Kernlogik
+    # -----------------------------------------------------------------------
 
     def on_motion(self):
-        """
-        Callback bei Bewegungserkennung.
-        Wird durch gpiozero in einem eigenen Thread aufgerufen.
-        """
-        # Verhindert mehrfaches Triggern waehrend einer laufenden Aufnahme
+        """Callback bei Bewegungserkennung."""
         if self.is_recording:
             return
 
@@ -161,65 +155,87 @@ class MotionRecorder:
         h264_path = os.path.join(RECORDINGS_DIR, base_name + ".h264")
         mp4_path = os.path.join(RECORDINGS_DIR, base_name + ".mp4")
 
-        # --- Aufnahme ---
-        encoder = H264Encoder()
-        logger.info("Aufnahme gestartet (%d Sekunden) ...", RECORD_SECONDS)
+        logger.info("Aufnahme gestartet (%d Sekunden)...", RECORD_SECONDS)
+
         try:
+            encoder = H264Encoder(bitrate=10_000_000)
+
+            self.camera.start()
+            time.sleep(1)
+
             self.camera.start_recording(encoder, FileOutput(h264_path))
             time.sleep(RECORD_SECONDS)
             self.camera.stop_recording()
+            self.camera.stop()
+
             logger.info("Aufnahme beendet: %s", h264_path)
+            time.sleep(1)
+
         except Exception as exc:
             logger.error("Fehler waehrend der Aufnahme: %s", exc)
-            # Falls die Aufnahme abbricht, nicht weiter zum DB-Eintrag
+            try:
+                self.camera.stop_recording()
+            except Exception:
+                pass
+            try:
+                self.camera.stop()
+            except Exception:
+                pass
             return
 
-        # --- Konvertierung h264 -> mp4 ---
+        if not os.path.exists(h264_path):
+            logger.error("H264-Datei wurde nicht erstellt.")
+            return
+
+        if os.path.getsize(h264_path) < 1000:
+            logger.error("H264-Datei ist leer oder beschädigt.")
+            return
+
         if not self.convert_to_mp4(h264_path, mp4_path):
-            logger.error("MP4-Konvertierung fehlgeschlagen. Kein DB-Eintrag.")
+            logger.error("MP4-Konvertierung fehlgeschlagen.")
             return
 
-        # --- DB-Eintrag ---
         self.insert_db_record(timestamp, base_name + ".mp4", mp4_path)
+        logger.info("Aufnahme erfolgreich gespeichert.")
 
     def convert_to_mp4(self, h264_path, mp4_path):
-        """
-        Konvertiert die rohe H.264-Datei in einen MP4-Container mittels ffmpeg.
-        Loescht bei Erfolg die temporaere .h264-Datei.
-        """
+        """Konvertiert H264 nach MP4 mit ffmpeg."""
         try:
-            # -r 30: Framerate setzen; -c copy: kein Re-Encoding (schnell)
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",                # vorhandene Datei ueberschreiben
-                    "-framerate", "30",
-                    "-i", h264_path,
-                    "-c", "copy",
-                    mp4_path,
-                ],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            logger.info("Video konvertiert zu MP4: %s", mp4_path)
+            command = [
+                "ffmpeg",
+                "-y",
+                "-framerate", "30",
+                "-i", h264_path,
+                "-c:v", "copy",
+                mp4_path,
+            ]
 
-            # Temporaere h264-Datei aufraeumen
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                logger.error("ffmpeg Fehler:")
+                logger.error(result.stderr)
+                return False
+
+            logger.info("MP4 erstellt: %s", mp4_path)
+
             if os.path.exists(h264_path):
                 os.remove(h264_path)
+
             return True
-        except subprocess.CalledProcessError as exc:
-            logger.error("ffmpeg-Konvertierung fehlgeschlagen: %s", exc)
-            return False
-        except FileNotFoundError:
-            logger.error("ffmpeg nicht gefunden. Bitte installieren (apt install ffmpeg).")
+
+        except Exception as exc:
+            logger.error("Konvertierungsfehler: %s", exc)
             return False
 
     def insert_db_record(self, timestamp, dateiname, dateipfad):
         """Schreibt einen Datensatz in die Tabelle 'recordings'."""
         cursor = None
         try:
-            # Verbindung pruefen und ggf. neu aufbauen (z.B. nach Timeout)
             if self.db_conn is None or not self.db_conn.is_connected():
                 logger.warning("DB-Verbindung verloren, baue neu auf ...")
                 self.setup_database()
@@ -231,9 +247,8 @@ class MotionRecorder:
             )
             cursor.execute(sql, (timestamp, dateiname, dateipfad))
             self.db_conn.commit()
-            logger.info(
-                "DB-Eintrag erfolgreich (ID %s): %s", cursor.lastrowid, dateiname
-            )
+            logger.info("DB-Eintrag erfolgreich (ID %s): %s", cursor.lastrowid, dateiname)
+
         except MySQLError as exc:
             logger.error("DB-Eintrag fehlgeschlagen: %s", exc)
             if self.db_conn is not None:
@@ -245,7 +260,9 @@ class MotionRecorder:
             if cursor is not None:
                 cursor.close()
 
-    # -- Lebenszyklus --------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Lebenszyklus
+    # -----------------------------------------------------------------------
 
     def run(self):
         """Startet das System und haelt den Hauptthread offen."""
@@ -254,8 +271,6 @@ class MotionRecorder:
         self.setup_camera()
         self.setup_pir()
 
-        # Hauptthread offen halten. gpiozero verarbeitet die Events im
-        # Hintergrund-Thread; hier nur auf Beenden warten.
         try:
             while self.running:
                 time.sleep(1)
@@ -268,11 +283,13 @@ class MotionRecorder:
         """Gibt alle Ressourcen sauber frei."""
         logger.info("Raeume Ressourcen auf ...")
 
-        # Falls noch eine Aufnahme laeuft, stoppen
         if self.camera is not None:
             try:
-                # stop_recording() wirft, falls nicht aktiv aufgenommen wird
                 self.camera.stop_recording()
+            except Exception:
+                pass
+            try:
+                self.camera.stop()
             except Exception:
                 pass
             try:
@@ -301,7 +318,6 @@ class MotionRecorder:
 def main():
     recorder = MotionRecorder()
 
-    # SIGTERM ebenfalls sauber behandeln (z.B. bei systemctl stop)
     def handle_sigterm(signum, frame):
         recorder.running = False
 

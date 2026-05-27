@@ -1,9 +1,11 @@
 from gpiozero import MotionSensor
-from signal import pause
 import time
-
 pir = MotionSensor(17)
-
+print('Sensor bereit. Bewege dich vor den Sensor...')
+time.sleep(60)
 while True:
-    print(pir.motion_detected)
-    time.sleep(1)   
+    if pir.motion_detected:
+        print('BEWEGUNG ERKANNT!')
+    else:
+        print('Keine Bewegung')
+    time.sleep(0.5)
