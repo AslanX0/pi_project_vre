@@ -1,4 +1,7 @@
 # Routen fuer Sensordaten (/api/data/*)
+#
+# Liefert rohe Messwerte aus der Datenbank: aktueller Wert, Statistiken,
+# Verlauf fuer Diagramme und paginierte Tabellendaten fuer die History-Ansicht.
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
@@ -12,6 +15,7 @@ router = APIRouter()
 
 @router.get("/api/data/latest")
 def api_latest():
+    """Gibt den neuesten Messdatensatz zurueck – wird im Dashboard als Echtzeitwert angezeigt."""
     conn = get_db_connection()
     if conn is None:
         return JSONResponse(status_code=500,
@@ -20,6 +24,7 @@ def api_latest():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM sensor_data ORDER BY id DESC LIMIT 1")
         data = cursor.fetchone()
+        # datetime-Objekt in String umwandeln, sonst kann JSON es nicht serialisieren
         if data and data.get("timestamp"):
             data["timestamp"] = data["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
         return {"success": True, "data": data or {}}
@@ -31,12 +36,16 @@ def api_latest():
 
 @router.get("/api/data/stats")
 def api_stats():
+    """Gibt Aggregatwerte (Mittel, Min, Max) der letzten 60 Tage zurueck.
+    Wird auf der Sensor-Seite als Uebersicht angezeigt.
+    """
     conn = get_db_connection()
     if conn is None:
         return JSONResponse(status_code=500,
                             content={"success": False, "error": "Datenbankverbindung fehlgeschlagen"})
     try:
         cursor = conn.cursor()
+        # Hinweis: Variable heisst noch time_24h_ago, aber das Fenster wurde auf 60 Tage erweitert
         time_24h_ago = datetime.now() - timedelta(days=60)
         cursor.execute("""
             SELECT
@@ -63,6 +72,12 @@ def api_stats():
 
 @router.get("/api/data/history")
 def api_history(hours: int = Query(default=1440), limit: int = Query(default=100000)):
+    """Gibt Messverlauf fuer einen bestimmten Zeitraum zurueck.
+
+    hours: wie viele Stunden zurueck (Standard: 1440 = 60 Tage)
+    limit: maximale Anzahl Datenpunkte (fuer Performance bei langen Zeitraeumen)
+    Wird hauptsaechlich fuer die Zeitreihencharts im Dashboard verwendet.
+    """
     conn = get_db_connection()
     if conn is None:
         return JSONResponse(status_code=500,
@@ -89,6 +104,11 @@ def api_history(hours: int = Query(default=1440), limit: int = Query(default=100
 
 @router.get("/api/data/table")
 def api_table(page: int = Query(default=1), per_page: int = Query(default=20)):
+    """Gibt paginierte Rohdaten fuer die History-Tabelle im Frontend zurueck.
+
+    Liefert neben den Daten auch Paginierungsinfos (aktuelle Seite, Gesamtanzahl)
+    damit das Frontend die Navigation (Vor/Zurueck) korrekt rendern kann.
+    """
     conn = get_db_connection()
     if conn is None:
         return JSONResponse(status_code=500,
@@ -96,6 +116,7 @@ def api_table(page: int = Query(default=1), per_page: int = Query(default=20)):
     try:
         offset = (page - 1) * per_page
         cursor = conn.cursor()
+        # Gesamtanzahl fuer Seitenberechnung separat abfragen
         cursor.execute("SELECT COUNT(*) as total FROM sensor_data")
         total = cursor.fetchone()['total']
         cursor.execute("""
@@ -107,11 +128,12 @@ def api_table(page: int = Query(default=1), per_page: int = Query(default=20)):
         for row in data:
             if row.get("timestamp"):
                 row["timestamp"] = row["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+        # Paginierungsinfos fuer das Frontend zusammenstellen
         pagination = {
             'page': page,
             'per_page': per_page,
             'total': total,
-            'pages': (total + per_page - 1) // per_page
+            'pages': (total + per_page - 1) // per_page  # Aufrunden auf ganze Seiten
         }
         return {"success": True, "data": data, "pagination": pagination}
     except pymysql.Error as e:
@@ -122,6 +144,9 @@ def api_table(page: int = Query(default=1), per_page: int = Query(default=20)):
 
 @router.get("/api/data")
 def api_data_legacy():
+    """Veralteter Endpunkt fuer Abwaertskompatibilitaet – gibt die letzten 10.000 Eintraege zurueck.
+    Neue Frontends sollten /api/data/history mit explizitem Zeitfenster verwenden.
+    """
     conn = get_db_connection()
     if conn is None:
         return JSONResponse(status_code=500, content={"error": "Datenbankverbindung fehlgeschlagen"})

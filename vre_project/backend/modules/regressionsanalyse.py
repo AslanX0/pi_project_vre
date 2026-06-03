@@ -1,14 +1,28 @@
+# Personenschaetzung und Temperaturvorhersage fuer das Restaurant-Dashboard.
+#
+# PersonEstimator:     Leitet aus dem BME680-Gaswiderstand (VOC) ab wie viele Personen
+#                      sich im Raum befinden. Mehr Menschen -> mehr CO2/Atemluft ->
+#                      niedrigerer Gaswiderstand. Bewegungssensor dient als Plausibilitaetspruefung.
+#
+# TemperatureRegression: Lineare Regression die aus der Personenzahl die Raumtemperatur
+#                         vorhersagt. Modell wird selbst implementiert (ohne sklearn)
+#                         um externe Abhaengigkeiten auf dem Raspberry Pi zu minimieren.
+
 import numpy as np
 import json
 import os
 from datetime import datetime
 
+# Kalibrierungs- und Modelldaten werden als JSON-Dateien gespeichert,
+# damit sie Neustarts ueberleben ohne eine eigene Datenbanktabelle zu benoetigen.
 CALIBRATION_FILE = os.path.join(os.path.dirname(__file__), "calibration.json")
 REGRESSION_FILE = os.path.join(os.path.dirname(__file__), "regression_model.json")
 
-MAX_PERSONS = 120
+MAX_PERSONS = 120  # Maximalkapazitaet des Restaurants
 MIN_PERSONS = 0
 
+# Startwert wenn noch keine Kalibrierung vorgenommen wurde.
+# 200000 Ohm ist ein typischer BME680-Wert bei guter Raumluft.
 DEFAULT_BASELINE = {
     "gas_resistance": 200000,
     "calibrated": False,
@@ -107,7 +121,12 @@ class TemperatureRegression:
         self._load_model()
 
     def train(self, persons_list, temperature_list):
-        """Trainiert das Modell mit gesammelten Messdaten."""
+        """Trainiert das Modell mit gesammelten Messdaten.
+
+        Implementiert die Methode der kleinsten Quadrate manuell (Normalengleichung),
+        ohne Abhaengigkeit von sklearn – das spart Ressourcen auf dem Pi.
+        Gibt False zurueck wenn zu wenig Daten vorhanden oder alle x-Werte identisch sind.
+        """
         if len(persons_list) < 3:
             return False
 
@@ -119,16 +138,19 @@ class TemperatureRegression:
         sum_xy = np.sum(x * y)
         sum_x2 = np.sum(x ** 2)
 
+        # Nenner der Normalengleichung – ist 0 wenn alle x-Werte gleich sind (kein Regressionsmodell moeglich)
         denom = n * sum_x2 - sum_x ** 2
         if denom == 0:
             return False
 
+        # Steigung und y-Achsenabschnitt der Geraden y = slope * x + intercept
         self.slope = float((n * sum_xy - sum_x * sum_y) / denom)
         self.intercept = float((sum_y - self.slope * sum_x) / n)
 
+        # R² berechnen: 1 = perfekte Anpassung, 0 = kein Zusammenhang
         y_pred = self.slope * x + self.intercept
-        ss_res = np.sum((y - y_pred) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        ss_res = np.sum((y - y_pred) ** 2)       # Reststreuung
+        ss_tot = np.sum((y - np.mean(y)) ** 2)   # Gesamtstreuung
         self.r_squared = float(1 - ss_res / ss_tot) if ss_tot > 0 else 0.0
 
         self.n_samples = n

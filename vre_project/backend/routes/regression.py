@@ -1,5 +1,8 @@
 # Routen fuer Lineare Regression (/api/regression/*)
-# Personen -> Temperatur Vorhersage
+#
+# Bildet die Beziehung zwischen geschaetzter Personenanzahl und gemessener Temperatur ab.
+# Mehr Personen -> mehr Koerperwaerme -> hoehere Raumtemperatur.
+# Das Modell wird automatisch stuendlich neu trainiert (siehe app.py regression_train_loop).
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
@@ -9,13 +12,20 @@ import pymysql
 from vre_project.backend.database import get_db_connection
 from vre_project.backend.modules import TemperatureRegression
 
+# Einzelne Instanz des Regressionsmodells – haelt slope/intercept im Speicher
+# und laedt beim Start ein gespeichertes Modell aus regression_model.json
 regression = TemperatureRegression()
 
 router = APIRouter()
 
 
 def train_regression_from_db(hours=0):
-    """Trainiert das Regressionsmodell. hours=0 bedeutet alle verfuegbaren Daten."""
+    """Laedt Trainingsdaten aus der DB und trainiert das Regressionsmodell neu.
+
+    hours=0: alle verfuegbaren Daten verwenden
+    hours>0: nur Daten der letzten N Stunden (z.B. 48h fuer den stuendlichen Zyklus)
+    Mindestens 3 Datenpunkte werden benoetigt, sonst schlaegt das Training fehl.
+    """
     conn = get_db_connection()
     if conn is None:
         regression.last_error = "Keine Datenbankverbindung"
@@ -67,6 +77,7 @@ def train_regression_from_db(hours=0):
 
 @router.get("/api/regression/status")
 def api_regression_status():
+    """Gibt Modellparameter und Guete (R²) zurueck. last_error zeigt den letzten Trainingsfehler."""
     status = regression.get_status()
     status["last_error"] = getattr(regression, 'last_error', None)
     return {"success": True, "data": status}
@@ -74,6 +85,9 @@ def api_regression_status():
 
 @router.get("/api/regression/predict")
 def api_regression_predict(persons: int = Query(default=60, ge=0, le=120)):
+    """Berechnet die vorhergesagte Temperatur fuer eine gegebene Personenzahl.
+    Gibt HTTP 400 zurueck wenn das Modell noch nicht trainiert wurde.
+    """
     temp = regression.predict(persons)
     if temp is None:
         return JSONResponse(status_code=400,
@@ -85,8 +99,12 @@ def api_regression_predict(persons: int = Query(default=60, ge=0, le=120)):
 
 @router.get("/api/regression/scatter")
 def api_regression_scatter(hours: int = Query(default=48)):
-    """Scatter-Daten: Personenanzahl (x) vs Temperatur (y) fuer Diagramm.
-    hours=0 liefert alle verfuegbaren Daten."""
+    """Liefert Streudiagramm-Daten: Personenanzahl (x) vs. Temperatur (y).
+
+    Enthaelt zusaetzlich die berechnete Regressionsgerade als zwei Endpunkte,
+    damit das Frontend die Gerade ohne eigene Berechnung zeichnen kann.
+    hours=0 liefert alle verfuegbaren Daten.
+    """
     conn = get_db_connection()
     if conn is None:
         return JSONResponse(status_code=500,
@@ -118,6 +136,7 @@ def api_regression_scatter(hours: int = Query(default=48)):
 
         regression_line = None
         if regression.slope is not None and points:
+            # Linie etwas ueber den Wertebereich der Datenpunkte hinaus verlängern
             x_min = min(p['x'] for p in points)
             x_max = max(p['x'] for p in points)
             line_start = max(0, x_min - 5)
@@ -126,6 +145,7 @@ def api_regression_scatter(hours: int = Query(default=48)):
                 "slope": regression.slope,
                 "intercept": regression.intercept,
                 "r_squared": regression.r_squared,
+                # nur Start- und Endpunkt der Geraden – Chart.js zeichnet die Linie dazwischen
                 "points": [
                     {"x": line_start, "y": regression.predict(line_start)},
                     {"x": line_end,   "y": regression.predict(line_end)}
@@ -146,7 +166,10 @@ def api_regression_scatter(hours: int = Query(default=48)):
 
 @router.post("/api/regression/train")
 def api_regression_train(hours: int = Query(default=0)):
-    """Manuelles Neutrainieren des Modells. hours=0 nutzt alle Daten."""
+    """Loest manuell ein Neutrainieren des Modells aus.
+    hours=0 nutzt alle verfuegbaren Daten. Nützlich nach langen Betriebsphasen
+    oder um das automatische stuendliche Training zu ueberschreiben.
+    """
     success = train_regression_from_db(hours=hours)
     if success:
         return {"success": True, "message": "Modell trainiert",

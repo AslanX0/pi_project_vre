@@ -1,14 +1,26 @@
+// Dashboard-Steuerung fuer das Restaurant-Sensor-Dashboard.
+// Single Page Application: Es gibt nur eine HTML-Seite, das Tab-Routing
+// passiert komplett im Browser per JavaScript (kein Seitenneulade).
+
+// Alle Daten werden alle 30 Sekunden neu geladen
 const REFRESH_INTERVAL = 30000;
+
+// Zentrales State-Objekt:
+//   page/perPage: aktuelle Seite der History-Tabelle
+//   charts: Cache aller Chart.js-Instanzen (verhindert Doppelanlagen)
 let state = { page: 1, perPage: 20, charts: {} };
 
+// Globale Chart.js-Standardwerte fuer das dunkle Design
 Chart.defaults.color = '#8b8fa3';
 Chart.defaults.borderColor = '#2a2d3a';
 Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
 
+// Mapping Tab-Name <-> URL-Pfad fuer die Browser-History-API
 const TAB_ROUTES = { dashboard: '/', regression: '/regression', sensors: '/sensors', history: '/history' };
 const PATH_TO_TAB = Object.fromEntries(Object.entries(TAB_ROUTES).map(([t, p]) => [p, t]));
 
 function activateTab(tabName) {
+    // aktiven Zustand aller Navigations-Buttons und Inhaltsbereich umschalten
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     const btn = document.querySelector(`.nav-btn[data-tab="${tabName}"]`);
@@ -17,6 +29,7 @@ function activateTab(tabName) {
     if (content) content.classList.add('active');
 }
 
+// Tab-Wechsel per Klick: URL in der Browserleiste aktualisieren ohne Seitenneulade
 document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
@@ -25,17 +38,21 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     });
 });
 
+// Zurueck/Vorwaerts im Browser: richtigen Tab anzeigen
 window.addEventListener('popstate', e => {
     activateTab(e.state?.tab || PATH_TO_TAB[window.location.pathname] || 'dashboard');
 });
 
+// Beim ersten Laden den passenden Tab anhand der aktuellen URL aktivieren
 activateTab(PATH_TO_TAB[window.location.pathname] || 'dashboard');
 
+// Tabellen-Paginierung: Seite zurueck/vorwaerts
 document.getElementById('btnPrev').addEventListener('click', () => { if (state.page > 1) { state.page--; loadTable(); } });
 document.getElementById('btnNext').addEventListener('click', () => { state.page++; loadTable(); });
 
 
 function showError(msg) {
+    // Fehlerbanner am oberen Bildschirmrand einblenden
     const banner = document.getElementById('errorBanner');
     document.getElementById('errorMessage').textContent = msg;
     banner.style.display = 'flex';
@@ -45,6 +62,9 @@ function hideError() {
     document.getElementById('errorBanner').style.display = 'none';
 }
 
+// Zentrale Fetch-Funktion: alle API-Aufrufe gehen ueber diese Funktion.
+// Bei Fehler wird der Fehlerbanner angezeigt und null zurueckgegeben,
+// damit die Aufrufer nicht abstuerzen.
 async function fetchApi(endpoint) {
     try {
         const res = await fetch(endpoint);
@@ -62,11 +82,15 @@ async function fetchApi(endpoint) {
     }
 }
 
+// Chart erstellen oder aktualisieren.
+// Wenn ein Chart fuer diese Canvas-ID bereits existiert (state.charts), werden
+// nur die Daten ausgetauscht statt das Diagramm komplett neu zu erstellen.
+// Das spart Speicher und vermeidet Flackern beim automatischen Refresh.
 function createLineChart(canvasId, labels, datasets, yTitle) {
     if (state.charts[canvasId]) {
         state.charts[canvasId].data.labels = labels;
         datasets.forEach((ds, i) => state.charts[canvasId].data.datasets[i].data = ds.data);
-        state.charts[canvasId].update('none');
+        state.charts[canvasId].update('none');  // 'none': ohne Animation fuer schnellere Updates
         return;
     }
     state.charts[canvasId] = new Chart(document.getElementById(canvasId).getContext('2d'), {
@@ -81,13 +105,18 @@ function createLineChart(canvasId, labels, datasets, yTitle) {
     });
 }
 
+// Zeitstempel aus dem Format "YYYY-MM-DD HH:MM:SS" in deutsches Kurzformat umwandeln
 function formatTime(ts) {
     if (!ts) return '--';
+    // Leerzeichen zwischen Datum und Uhrzeit durch 'T' ersetzen, damit new Date() es korrekt parst
     const d = new Date(ts.replace(' ', 'T'));
     return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// --- Dashboard-Tab ---
+
 async function loadDashboard() {
+    // Aktuelle Kennzahlen (neuester Datensatz) in die Anzeigefelder schreiben
     const res = await fetchApi('/api/data/latest');
     if (res?.success && res.data) {
         const d = res.data;
@@ -103,6 +132,7 @@ async function loadDashboard() {
 }
 
 async function loadDashboardCharts() {
+    // Zeitreihencharts fuer die letzten 7 Tage laden (168h), maximal 2000 Datenpunkte
     const data = await fetchApi('/api/data/history?hours=168&limit=2000');
     if (!data?.success || !data.data.length) return;
     const rows = data.data, labels = rows.map(r => formatTime(r.timestamp));
@@ -111,7 +141,10 @@ async function loadDashboardCharts() {
     createLineChart('chartOccupancy', labels, [{ label: 'Geschaetzte Personen', data: rows.map(r => r.estimated_occupancy ?? 0), borderColor: '#d4a853', backgroundColor: 'rgba(212,168,83,0.1)', fill: true }], 'Personen');
 }
 
+// --- Regressions-Tab ---
+
 async function loadRegression() {
+    // Modellstatus und Streudiagramm-Daten parallel laden
     const [regStatus, scatter] = await Promise.all([
         fetchApi('/api/regression/status'),
         fetchApi('/api/regression/scatter?hours=48')
@@ -219,7 +252,10 @@ async function loadRegression() {
     }
 }
 
+// --- Sensor-Tab ---
+
 async function loadSensors() {
+    // Alle drei API-Anfragen gleichzeitig starten um Ladezeit zu sparen
     const [occ, stats, estStatus] = await Promise.all([
         fetchApi('/api/occupancy/current'),
         fetchApi('/api/data/stats'),
@@ -253,6 +289,8 @@ async function loadSensors() {
     }
 }
 
+// Kalibrierungsbutton: Setzt den aktuellen VOC-Wert als Baseline (Referenz fuer leeren Raum).
+// Ablauf: aktuellen Sensorwert holen -> als Baseline per POST an API senden -> Sensoransicht neu laden.
 document.getElementById('btnCalibBaseline').addEventListener('click', async () => {
     const statusEl = document.getElementById('calibStatus');
     const latest = await fetchApi('/api/data/latest');
@@ -274,7 +312,7 @@ document.getElementById('btnCalibBaseline').addEventListener('click', async () =
         if (data.success) {
             statusEl.style.color = 'var(--success)';
             statusEl.textContent = `VOC-Baseline auf ${Math.round(gas).toLocaleString()} Ω gesetzt`;
-            loadSensors();
+            loadSensors();  // Kalibrierungsstatus in der Anzeige aktualisieren
         } else {
             statusEl.style.color = 'var(--danger)';
             statusEl.textContent = data.error || 'Fehler';
@@ -285,7 +323,10 @@ document.getElementById('btnCalibBaseline').addEventListener('click', async () =
     }
 });
 
+// --- History-Tab ---
+
 async function loadTable() {
+    // Paginierte Rohdaten laden und in die Tabelle rendern
     const data = await fetchApi(`/api/data/table?page=${state.page}&per_page=${state.perPage}`);
     if (!data?.success) {
         document.getElementById('tableBody').innerHTML = '<tr><td colspan="7" style="color:var(--danger)">Fehler beim Laden der Daten</td></tr>';
@@ -297,10 +338,13 @@ async function loadTable() {
     const p = data.pagination;
     document.getElementById('pageInfo').textContent = `Seite ${p.page} von ${p.pages}`;
     document.getElementById('tableInfo').textContent = `${p.total} Eintraege`;
+    // Paginierungsbuttons deaktivieren wenn keine weitere Seite existiert
     document.getElementById('btnPrev').disabled = p.page <= 1;
     document.getElementById('btnNext').disabled = p.page >= p.pages;
 }
 
+// Manueller Retrain-Button: loest ein Neutrainieren des Regressionsmodells aus.
+// Button wird waehrend des Trainings deaktiviert damit kein Doppelklick moeglich ist.
 document.getElementById('btnRetrain').addEventListener('click', async () => {
     const statusEl = document.getElementById('retrainStatus');
     const btn = document.getElementById('btnRetrain');
@@ -326,6 +370,10 @@ document.getElementById('btnRetrain').addEventListener('click', async () => {
     }
 });
 
+// Initialisierung: Dashboard, Charts und Tabelle parallel laden, dann Regression und Sensoren.
+// Regression und Sensoren werden nachgelagert gestartet damit das Dashboard schnell sichtbar wird.
 async function init() { await Promise.all([loadDashboard(), loadDashboardCharts(), loadTable()]); loadRegression(); loadSensors(); }
 init();
+
+// Automatisches Neuladen aller Daten alle 30 Sekunden (REFRESH_INTERVAL)
 setInterval(() => { loadDashboard(); loadDashboardCharts(); loadRegression(); loadSensors(); }, REFRESH_INTERVAL);

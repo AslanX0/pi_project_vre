@@ -1,6 +1,11 @@
-# FastAPI-Server - Restaurant Sensor API
+# FastAPI-Server – Restaurant Sensor API
 # BME680 (Temperatur, Feuchtigkeit, VOC) + RCWL-0516 (Bewegung)
-# Personenschätzung (VOC-Baseline) + Lineare Regression (Personen -> Temperatur)
+# Personenschaetzung (VOC-Baseline) + Lineare Regression (Personen -> Temperatur)
+#
+# Architektur: Der Server hat drei Hintergrund-Tasks die parallel zur API laufen:
+#   1. estimation_loop  – berechnet fehlende Personenschaetzungen in der DB nach
+#   2. regression_train_loop – trainiert das Regressionsmodell stuendlich neu
+#   3. data_retention_loop – loescht Messdaten aelter als 30 Tage (Datenbankpflege)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,12 +23,19 @@ from vre_project.backend.routes.regression import regression, train_regression_f
 
 
 async def estimation_loop():
+    """Hintergrund-Task: Fuellt estimated_occupancy fuer Datensaetze nach, die noch keinen Wert haben.
+
+    Laeuft alle 60 Sekunden und verarbeitet maximal 500 Datensaetze pro Durchlauf.
+    Das passiert z.B. nach einem Neustart, wenn der Sensor Daten gespeichert hat
+    bevor die Schaetzlogik aktiv war.
+    """
     while True:
         try:
             conn = get_db_connection()
             if conn:
                 try:
                     cursor = conn.cursor()
+                    # nur Zeilen ohne Schaetzwert holen, aufsteigend damit aeltere Daten zuerst bearbeitet werden
                     cursor.execute("""
                         SELECT id, gas_resistance, movement_detected
                         FROM sensor_data
@@ -52,8 +64,13 @@ async def estimation_loop():
 
 
 async def data_retention_loop():
-    """Löscht Datensätze älter als 30 Tage und läuft einmal täglich."""
+    """Hintergrund-Task: Loescht Messdaten aelter als 30 Tage.
+
+    Laeuft einmal taeglich. Verhindert dass die Datenbank auf dem Raspberry Pi
+    zu gross wird – der SD-Karten-Speicher ist begrenzt.
+    """
     while True:
+        # 24 Stunden warten bevor die erste Bereinigung laeuft
         await asyncio.sleep(24 * 3600)
         try:
             conn = get_db_connection()
@@ -74,13 +91,17 @@ async def data_retention_loop():
 
 
 async def regression_train_loop():
-    """Trainiert Regressionsmodell stuendlich mit Daten der letzten 48 Stunden."""
-    # Erstes Training direkt beim Start
+    """Hintergrund-Task: Trainiert das Regressionsmodell (Personen -> Temperatur) stuendlich neu.
+
+    Wartet beim Start 10 Sekunden damit die DB-Verbindung sicher steht,
+    dann sofortiges erstes Training – danach jede Stunde mit den letzten 48h Daten.
+    """
+    # kurz warten damit die App vollstaendig hochgefahren ist bevor das erste Training startet
     await asyncio.sleep(10)
     train_regression_from_db(hours=48)
 
     while True:
-        await asyncio.sleep(3600)  # Stuendlich neu trainieren
+        await asyncio.sleep(3600)  # stuendlich neu trainieren
         try:
             train_regression_from_db(hours=48)
             print("[Regression] MODELL TRAINIERT (1h-Zyklus, letzte 48h Daten)")
@@ -89,6 +110,9 @@ async def regression_train_loop():
 
 
 def init_db():
+    """Erstellt die Messtabelle beim Serverstart, falls sie noch nicht existiert.
+    Wird synchron ausgefuehrt bevor die Hintergrund-Tasks starten.
+    """
     conn = get_db_connection()
     if conn is None:
         print("[DB] FEHLER - KEINE VERBINDUNG")
@@ -114,28 +138,40 @@ def init_db():
 
 @asynccontextmanager
 async def lifespan(app):
+    """FastAPI-Lifespan: startet beim Hochfahren die Hintergrund-Tasks und bricht sie beim Herunterfahren ab.
+
+    Das lifespan-Muster ersetzt seit FastAPI 0.93 die veralteten on_event-Handler.
+    """
     init_db()
+    # alle drei Tasks parallel starten
     task_est = asyncio.create_task(estimation_loop())
     task_reg = asyncio.create_task(regression_train_loop())
     task_ret = asyncio.create_task(data_retention_loop())
-    yield
+    yield  # hier laeuft die App
+    # beim Beenden alle Tasks sauber abbrechen
     task_est.cancel()
     task_reg.cancel()
     task_ret.cancel()
 
 
 app = FastAPI(title="Asia Restaurant API", lifespan=lifespan)
+
+# CORS offen fuer alle Origins – akzeptabel weil der Server nur im lokalen Netzwerk erreichbar ist
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"], allow_credentials=True)
 
+# API-Routen aus den einzelnen Modulen einbinden
 app.include_router(data_router)
 app.include_router(occupancy_router)
 app.include_router(estimator_router)
 app.include_router(regression_router)
 
+# Pfad zum Frontend-Verzeichnis – relativ zur aktuellen Datei aufgeloest
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
+# Die folgenden Routen liefern alle das gleiche index.html aus.
+# Das JavaScript im Browser uebernimmt dann das Tab-Routing (Single Page Application).
 @app.get("/")
 def serve_dashboard(): return FileResponse(str(FRONTEND_DIR / "index.html"))
 
@@ -149,6 +185,7 @@ def serve_sensors(): return FileResponse(str(FRONTEND_DIR / "index.html"))
 def serve_history(): return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
+# CSS, JS und andere statische Dateien unter /static bereitstellen
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 
